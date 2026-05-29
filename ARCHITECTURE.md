@@ -102,7 +102,6 @@ feedback/server.py  (Task Scheduler → at logon, always-on)
   └── feedback/profile_updater.py            (email footer HTML)
 ```
 
-Note: `scrapers/reliefweb.py` exists on disk but is **not imported in `main.py`** — it is an orphaned file (see [Known Limitations](#known-limitations--disabled-scrapers)).
 
 ---
 
@@ -301,7 +300,6 @@ class RawJob:
 | `bit` | `BITScraper` | — | ❌ Disabled ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) |
 | `fgv` | `FGVScraper` | — | ❌ Disabled ([#5](https://github.com/timovanommeren/job_scraper/issues/5)) |
 
-**Not in main.py:** `scrapers/reliefweb.py` — fully implemented, reads from `settings.reliefweb` config, but was removed from the scraper registry when the reliefweb config block was cleaned up. The file still exists on disk (see [Known Limitations](#known-limitations--disabled-scrapers)).
 
 ### Retry policy
 Most scrapers use `tenacity.retry` with `stop_after_attempt(3)` and `wait_exponential(min=2, max=15)`. Exceptions: TNI uses `stop_after_attempt(2)` to limit wasted time when blocked.
@@ -492,14 +490,19 @@ def _close_db(exc):
 
 **File:** `notifier/gmail.py`
 
-### Score thresholds (hardcoded constants)
+### Score thresholds (loaded from `config/settings.yaml`)
 ```python
-STRONG_THRESHOLD  = 8   # daily "Strong Matches" — emailed if score >= 8
-ALSO_THRESHOLD    = 6   # daily "Also Found" section — score 6–7
-WEEKLY_LOW_MIN    = 1   # weekly digest includes all scored jobs
+STRONG_THRESHOLD, ALSO_THRESHOLD = _load_thresholds()
+# Reads config/settings.yaml:
+#   filtering.strong_match_threshold  → default 8
+#   filtering.email_also_min_score    → default 6
+# Falls back to (8, 6) if settings.yaml is missing or unreadable.
+WEEKLY_LOW_MIN = 1   # weekly digest includes all scored jobs (hardcoded)
 ```
 
-Jobs with score <= 5 are stored in the DB but **never appear in any email** unless you open `http://localhost:5001/jobs`.
+To change thresholds: edit `config/settings.yaml` — no code change needed. Changes take effect on the next `main.py` run (thresholds are loaded at module import time).
+
+Jobs with score < `email_also_min_score` (< 6 by default) are stored in the DB but **never appear in any email** unless you open `http://localhost:5001/jobs`.
 
 ### Daily email logic
 1. `should_send_daily(new_postings)` — returns True only if at least one score >= 8
@@ -631,7 +634,6 @@ job_scraper/
     ├── jrc.py                    # JRC PhD positions — h3-based parsing (requests + BS4)
     ├── oecd.py                   # DISABLED — Cloudflare bot challenge
     ├── rand.py                   # RAND Corporation — Workday CXS JSON API (POST)
-    ├── reliefweb.py              # ORPHANED — not in main.py registry (see Known Limitations)
     ├── scp.py                    # SCP vacancies — werkenvoornederland.nl Bloomreach endpoint
     ├── tni.py                    # TNI — requests; always returns 429 (IP-level block)
     ├── trimbos.py                # Trimbos-instituut — Playwright; JS-rendered SPA
@@ -653,11 +655,11 @@ scraper:
   raw_text_max_chars: 4000        # Max chars of raw_text passed to Claude (env var RAW_TEXT_MAX_CHARS overrides)
 
 filtering:
-  strong_match_threshold: 8      # Score >= this → "strong_match" tier; emailed immediately
-  maybe_threshold: 5             # Score >= this → "maybe" tier; emailed in "Also Found" section if >= 6
-  # Note: filtering.*_threshold values are NOT currently read by the application code.
-  # Thresholds are hardcoded in gmail.py (STRONG_THRESHOLD=8, ALSO_THRESHOLD=6) and
-  # in the extractor_scorer.py tier description. These config values document intent only.
+  strong_match_threshold: 8      # Score >= this → "Strong Matches" in daily email; read by gmail.py
+  maybe_threshold: 5             # Score >= this → "maybe" tier in DB/UI (not the email cutoff)
+  email_also_min_score: 6        # Score >= this → "Also Found" section in daily email; read by gmail.py
+  # All three values are read by notifier/gmail.py:_load_thresholds() at startup.
+  # Changing these values takes effect on the next main.py run.
 
 email:
   send_if_no_new_jobs: true      # Currently unused — the actual gate is should_send_daily() in gmail.py
@@ -710,22 +712,14 @@ RAW_TEXT_MAX_CHARS=4000               # Optional; max chars of job text passed t
 |---|---|
 | `eucareers.py` | EU traineeships open ~March and October only. Returns 0 outside intake windows — this is expected. Logs an info message when 0 found. |
 
-### Orphaned files
-
-| File | Notes |
-|---|---|
-| `scrapers/reliefweb.py` | Fully implemented ReliefWeb API scraper. Was removed from `main.py`'s registry when the `reliefweb:` config block was deleted from `settings.yaml`. The file still exists on disk. To re-enable: add to `build_scraper_registry()` in `main.py` and restore `reliefweb:` config. |
-
 ### Missing Blue Book traineeship coverage
 
 The EU Commission Blue Book traineeship (EPSO-managed, distinct from agency traineeships) is not covered. See [#6](https://github.com/timovanommeren/job_scraper/issues/6).
 
 ### Code-level gotchas to be aware of
 
-1. **`settings.yaml` thresholds are not wired into code.** `filtering.strong_match_threshold` and `filtering.maybe_threshold` are documentation only. The actual thresholds are hardcoded in `notifier/gmail.py` (`STRONG_THRESHOLD = 8`, `ALSO_THRESHOLD = 6`) and in the `extractor_scorer.py` tier description field.
+1. **`db/dedup.py:get_unemailed_jobs()`** is defined but never called anywhere in the application. It is dead code. The weekly digest queries the DB directly in `gmail.py:send_weekly_digest()`.
 
-2. **`db/dedup.py:get_unemailed_jobs()`** is defined but never called anywhere in the application. It is dead code. The weekly digest queries the DB directly in `gmail.py:send_weekly_digest()`.
+2. **`.env.example` model name is stale.** It shows `CLAUDE_MODEL=claude-haiku-3-5-20251001` but the code default is `claude-haiku-4-5-20251001`. If you copy `.env.example` verbatim, you'll be using a potentially outdated model name.
 
-3. **`.env.example` model name is stale.** It shows `CLAUDE_MODEL=claude-haiku-3-5-20251001` but the code default is `claude-haiku-4-5-20251001`. If you copy `.env.example` verbatim, you'll be using a potentially outdated model name.
-
-4. **Weekly digest does not deduplicate against daily emails.** A job emailed on Monday's daily digest will also appear in Tuesday's weekly digest. The weekly digest queries `first_seen_at >= 7 days ago` with no `emailed_at IS NULL` filter. This is by design (weekly = retrospective), but worth knowing.
+3. **Weekly digest does not deduplicate against daily emails.** A job emailed on Monday's daily digest will also appear in Tuesday's weekly digest. The weekly digest queries `first_seen_at >= 7 days ago` with no `emailed_at IS NULL` filter. This is by design (weekly = retrospective), but worth knowing.

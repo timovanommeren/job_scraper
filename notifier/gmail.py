@@ -3,6 +3,7 @@ import os
 import logging
 import json
 import sqlite3
+import yaml
 from dataclasses import dataclass
 from datetime import date, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -14,10 +15,30 @@ logger = logging.getLogger(__name__)
 
 FEEDBACK_BASE = "http://localhost:5001"
 
-# Score thresholds
-STRONG_THRESHOLD  = 8   # daily "Strong Matches" section
-ALSO_THRESHOLD    = 6   # daily "Also Found" section  (6–7)
-WEEKLY_LOW_MIN    = 1   # weekly digest includes everything ≥ 1
+
+def _load_thresholds() -> tuple[int, int]:
+    """Load score thresholds from config/settings.yaml.
+
+    Returns (strong_match_threshold, email_also_min_score).
+    Falls back to (8, 6) if settings.yaml is missing or malformed.
+    """
+    try:
+        settings_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+        with open(settings_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        filt = cfg.get("filtering", {})
+        strong = int(filt.get("strong_match_threshold", 8))
+        also   = int(filt.get("email_also_min_score", 6))
+        return strong, also
+    except Exception:
+        logger.warning("Could not load settings.yaml thresholds; using defaults (8, 6)")
+        return 8, 6
+
+
+# Score thresholds — loaded from config/settings.yaml at import time.
+# To change: edit config/settings.yaml (strong_match_threshold, email_also_min_score).
+STRONG_THRESHOLD, ALSO_THRESHOLD = _load_thresholds()
+WEEKLY_LOW_MIN = 1   # weekly digest includes everything ≥ 1
 
 
 @dataclass
