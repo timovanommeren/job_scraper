@@ -67,6 +67,8 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | WODC | `scrapers/wodc.py` | Bloomreach CMS endpoint, requests |
 | SCP | `scrapers/scp.py` | Bloomreach CMS endpoint, requests |
 | Trimbos-instituut | `scrapers/trimbos.py` | Playwright |
+| FGV | `scrapers/fgv.py` | Playwright (portal.fgv.br rejects Python TLS) |
+| EPSO Blue Book | `scrapers/epso_bluebook.py` | requests + BS4 |
 
 ### Disabled Scrapers (return `[]` with a WARNING log — do not attempt to fix via code changes)
 
@@ -75,7 +77,6 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | UN Careers | `scrapers/uncareers.py` | CloudFront HTTP 403 — CDN blocks all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | OECD | `scrapers/oecd.py` | Cloudflare bot challenge on every request | [#3](https://github.com/timovanommeren/job_scraper/issues/3) |
 | BIT | `scrapers/bit.py` | Cloudflare block + confirmed 0 open positions | [#4](https://github.com/timovanommeren/job_scraper/issues/4) |
-| FGV | `scrapers/fgv.py` | Original URL defunct (HTTP 404 + SSL errors) | [#5](https://github.com/timovanommeren/job_scraper/issues/5) |
 
 ### Always-Broken Scrapers (runs but always returns 0)
 
@@ -88,6 +89,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Source | Notes |
 |---|---|
 | EU Careers | `scrapers/eucareers.py` — EU agency traineeships open only ~March and October. 0 results outside these windows is **expected**. The scraper logs `INFO` (not `WARNING`) when 0 found. |
+| EPSO Blue Book | `scrapers/epso_bluebook.py` — European Commission Blue Book traineeship, distinct from EU agency traineeships. Applications open twice yearly (~March and October). When closed, returns 0 with `INFO` log. Session slug is embedded in the URL so March and October sessions get distinct dedup hashes. |
 
 ### Known Issues (not yet GitHub issues — flag before fixing)
 
@@ -129,7 +131,7 @@ RAW_TEXT_MAX_CHARS       # Optional. Default: 4000. Max chars of raw job text se
 
 **Three processes, never conflate them.** The Flask app (`feedback/server.py`) runs continuously as a persistent Windows logon process — it is always alive, idle except when handling HTTP requests, and never touches the scraper pipeline. The daily scraper (`main.py` via `JobScraperDaily` Task Scheduler at 07:00) and weekly digest (`main.py --weekly-digest` via `JobScraperWeeklyDigest` at Tuesday 08:00) are short-lived — they start, do their work, and exit. All three share one SQLite database (`db/jobs.db`), which uses WAL mode to allow concurrent reads from Flask while `main.py` writes.
 
-**Data flow in one paragraph.** Each of 16 scrapers returns a list of `RawJob` objects (title, url, source, raw_text, org, location, deadline). For each `RawJob`, `db/dedup.py:is_seen()` computes a SHA-256 hash of the canonical URL and checks the `url_hash` index — already seen jobs are skipped (dedup is O(1), happens before any API call). New jobs go to `agents/extractor_scorer.py:extract_and_score()` which calls the Anthropic API with a system prompt loaded from `config/profile.yaml`, augmented with recent feedback examples from `feedback/feedback_store.json` (this is the feedback loop — past likes and passes are injected as few-shot examples into every scoring call). The structured output (`JobPosting` Pydantic model) is inserted into `db/jobs.db`. After all jobs are scored, `notifier/gmail.py:should_send_daily()` checks if any score ≥ 8 — if yes, an HTML digest is emailed.
+**Data flow in one paragraph.** Each of 17 scrapers returns a list of `RawJob` objects (title, url, source, raw_text, org, location, deadline). For each `RawJob`, `db/dedup.py:is_seen()` computes a SHA-256 hash of the canonical URL and checks the `url_hash` index — already seen jobs are skipped (dedup is O(1), happens before any API call). New jobs go to `agents/extractor_scorer.py:extract_and_score()` which calls the Anthropic API with a system prompt loaded from `config/profile.yaml`, augmented with recent feedback examples from `feedback/feedback_store.json` (this is the feedback loop — past likes and passes are injected as few-shot examples into every scoring call). The structured output (`JobPosting` Pydantic model) is inserted into `db/jobs.db`. After all jobs are scored, `notifier/gmail.py:should_send_daily()` checks if any score ≥ 8 — if yes, an HTML digest is emailed.
 
 **Where to find things for common changes:**
 - Change how jobs are scored or what fields are extracted → `agents/extractor_scorer.py` + `config/profile.yaml`
@@ -199,7 +201,7 @@ Full file dependency diagram: [ARCHITECTURE.md — File Dependency Diagram](ARCH
 3. **Never add `anthropic.Anthropic()` instantiations outside `agents/extractor_scorer.py`.**
 4. **Never hardcode API keys, email credentials, model names, or score thresholds in source files.** Runtime values come from `.env`; model default is in `extractor_scorer.py` (not settings.yaml).
 5. **Never use `DROP TABLE` or recreate existing SQLite tables.** Use `ALTER TABLE` with `_safe_add_column()` for schema changes.
-6. **Never re-enable a disabled scraper (uncareers, oecd, bit, fgv) without reading its GitHub issue.** These are blocked by external infrastructure, not fixable with code changes alone.
+6. **Never re-enable a disabled scraper (uncareers, oecd, bit) without reading its GitHub issue.** These are blocked by external infrastructure, not fixable with code changes alone.
 7. **Never change `fetch()`'s return type** (must always return `list[RawJob]`, never `None`, never raises). Changing this breaks `main.py:run_scrapers()`.
 8. **Never push commits to GitHub without being explicitly asked.** Always save locally and present changes for review first.
 9. **Never hardcode score thresholds in source files.** The live gates come from `settings.yaml` (`strong_match_threshold`, `email_also_min_score`), loaded at startup by `notifier/gmail.py:_load_thresholds()`.
@@ -224,8 +226,7 @@ Full profile with exact scoring rules, penalties, and bonus categories: **`confi
 | [#2](https://github.com/timovanommeren/job_scraper/issues/2) | UN Careers disabled — CloudFront blocks all automation | AWS CDN returns 403 before any page content loads. Playwright and requests both blocked. | `bug` `scraper` `needs-investigation` |
 | [#3](https://github.com/timovanommeren/job_scraper/issues/3) | OECD disabled — Cloudflare bot challenge | Cloudflare challenge fires before content loads regardless of UA. | `bug` `scraper` `needs-investigation` |
 | [#4](https://github.com/timovanommeren/job_scraper/issues/4) | BIT disabled — Cloudflare + 0 positions | Cloudflare on main site; likely has Greenhouse ATS endpoint. | `scraper` `low-priority` |
-| [#5](https://github.com/timovanommeren/job_scraper/issues/5) | FGV disabled — original URL defunct | concursos.fgv.br returns 404/SSL errors. FGV likely restructured. | `bug` `scraper` `needs-investigation` |
-| [#6](https://github.com/timovanommeren/job_scraper/issues/6) | EU Careers: Blue Book traineeship not covered | Current scraper covers agency traineeships. EU Commission Blue Book (EPSO portal) is separate. | `enhancement` `scraper` |
+| [#6](https://github.com/timovanommeren/job_scraper/issues/6) | EU Careers: Blue Book traineeship not covered | **Resolved 2026-05-29** — `scrapers/epso_bluebook.py` added; scrapes `traineeships.ec.europa.eu`. | `enhancement` `scraper` |
 
 **Before attempting to fix any scraper in this table: read the full issue on GitHub.** These were disabled for infrastructure reasons that code changes alone cannot resolve. The suggested next steps in each issue are where to start.
 
@@ -336,18 +337,43 @@ schtasks /end   /tn "JobScraperFeedbackServer"
 
 ---
 
-## Planned Tooling (Not Yet Installed)
+## gstack
 
-### gstack
+Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
 
-**Repository:** https://github.com/garrytan/gstack  
-**Status:** Planned — NOT yet installed in this environment.
-
-`gstack` is a skill-based development framework for Claude Code. Once installed, new feature development should prefer gstack-based skill patterns where applicable for modular, composable additions to the pipeline.
-
-**Until gstack is installed and its conventions are understood:**
-- Do not attempt to apply its patterns.
-- Do not refactor existing code to use gstack retroactively.
-- Apply it only to new components added after installation.
-
-When gstack is installed, update this section with specific guidance on which parts of the pipeline are good candidates for skill patterns (likely: new scraper types, new notification channels, new scoring strategies).
+Available gstack skills:
+- `/office-hours`
+- `/plan-ceo-review`
+- `/plan-eng-review`
+- `/plan-design-review`
+- `/design-consultation`
+- `/design-shotgun`
+- `/design-html`
+- `/review`
+- `/ship`
+- `/land-and-deploy`
+- `/canary`
+- `/benchmark`
+- `/browse`
+- `/connect-chrome`
+- `/qa`
+- `/qa-only`
+- `/design-review`
+- `/setup-browser-cookies`
+- `/setup-deploy`
+- `/setup-gbrain`
+- `/retro`
+- `/investigate`
+- `/document-release`
+- `/document-generate`
+- `/codex`
+- `/cso`
+- `/autoplan`
+- `/plan-devex-review`
+- `/devex-review`
+- `/careful`
+- `/freeze`
+- `/guard`
+- `/unfreeze`
+- `/gstack-upgrade`
+- `/learn`

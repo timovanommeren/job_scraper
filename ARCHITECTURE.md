@@ -83,7 +83,8 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── scrapers/scp.py
         ├── scrapers/trimbos.py
         ├── scrapers/bit.py                [DISABLED]
-        ├── scrapers/fgv.py                [DISABLED]
+        ├── scrapers/fgv.py
+        ├── scrapers/epso_bluebook.py
         │     └── (all scrapers import scrapers/base.py: RawJob, BaseScraper)
         │
         ├── agents/extractor_scorer.py  →  Anthropic API (claude-haiku-4-5-*)
@@ -118,7 +119,7 @@ feedback/server.py  (Task Scheduler → at logon, always-on)
          │
          ▼
   ┌─ run_scrapers() ───────────────────────────────────────────┐
-  │  for each scraper in registry (16 scrapers):               │
+  │  for each scraper in registry (17 scrapers):               │
   │    scraper.fetch() → list[RawJob]                          │
   │    RawJob fields: title, url, source, raw_text,            │
   │                   organization, location, deadline         │
@@ -178,7 +179,7 @@ feedback/server.py  (Task Scheduler → at logon, always-on)
 4. `db.dedup.get_connection()` — opens SQLite connection with WAL mode and row_factory
 5. `agents.extractor_scorer.build_client()` — creates `instructor.from_anthropic(Anthropic(api_key=...))`
 6. `log_run_start(conn)` — inserts a row into `run_log` table, returns `run_id`
-7. `run_scrapers(settings)` — calls all 16 registered scrapers, aggregates `list[RawJob]`
+7. `run_scrapers(settings)` — calls all 17 registered scrapers, aggregates `list[RawJob]`
 8. `score_new_jobs(raw_jobs, conn, client)` — dedup + score + insert (see Data Flow above)
 9. `send_digest(new_postings, stats, conn)` — conditionally sends email
 10. `log_run_finish(...)` — updates `run_log` row with final stats and status
@@ -279,7 +280,7 @@ class RawJob:
     deadline:     Optional[str]   # raw string as found on page
 ```
 
-### Registered Scrapers (16 total in main.py)
+### Registered Scrapers (17 total in main.py)
 
 | Source | Class | Method | Status |
 |---|---|---|---|
@@ -298,7 +299,8 @@ class RawJob:
 | `scp` | `SCPScraper` | Bloomreach CMS endpoint, requests | ✅ Active |
 | `trimbos` | `TrimbosScraper` | Playwright, `a[href*="vacaturebeschrijving"]` | ✅ Active |
 | `bit` | `BITScraper` | — | ❌ Disabled ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) |
-| `fgv` | `FGVScraper` | — | ❌ Disabled ([#5](https://github.com/timovanommeren/job_scraper/issues/5)) |
+| `fgv` | `FGVScraper` | Playwright, `a[href^="/vaga/"]` — requests TLS rejected by portal.fgv.br | ✅ Active |
+| `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup, `section.ecl-banner--no-media` status banner | ✅ Active (seasonal) |
 
 
 ### Retry policy

@@ -1,6 +1,6 @@
 # Job Scraper
 
-A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 16 sources daily, scores each posting against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 8/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
+A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 17 sources daily, scores each posting against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 8/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
 
 Runs automatically via Windows Task Scheduler. No manual intervention needed once set up.
 
@@ -12,7 +12,7 @@ Runs automatically via Windows Task Scheduler. No manual intervention needed onc
 graph LR
     A[Task Scheduler<br/>07:00 daily] --> B[run.bat]
     B --> C[main.py]
-    C --> D[16 Scrapers]
+    C --> D[17 Scrapers]
     D --> E[Dedup check<br/>db/jobs.db]
     E --> F[Claude Haiku<br/>Anthropic API]
     F --> G[SQLite DB<br/>jobs + scores]
@@ -40,11 +40,12 @@ graph LR
 | SCP | werkenvoornederland.nl | ✅ Active |
 | Trimbos-instituut | Playwright (JS) | ✅ Active |
 | EU Careers | Playwright (JS), seasonal | ✅ Active (Mar/Oct intakes only) |
+| FGV | Playwright (JS) | ✅ Active |
+| EPSO Blue Book | requests, seasonal | ✅ Active (Mar/Oct intakes only) |
 | TNI | requests | ⚠️ Always 429 — [issue #1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | UN Careers | — | ❌ CloudFront 403 — [issue #2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | OECD | — | ❌ Cloudflare — [issue #3](https://github.com/timovanommeren/job_scraper/issues/3) |
 | BIT | — | ❌ Cloudflare + 0 positions — [issue #4](https://github.com/timovanommeren/job_scraper/issues/4) |
-| FGV | — | ❌ URL defunct — [issue #5](https://github.com/timovanommeren/job_scraper/issues/5) |
 
 ---
 
@@ -86,8 +87,7 @@ Clicking "Interested" or "Pass" in an email opens the job detail page. Your rati
 ## Known Limitations
 
 - **UN Careers, OECD** — blocked by CDN/Cloudflare. See issues [#2](https://github.com/timovanommeren/job_scraper/issues/2), [#3](https://github.com/timovanommeren/job_scraper/issues/3) for proposed workarounds (REST API, playwright-stealth).
-- **BIT, FGV** — disabled; see [#4](https://github.com/timovanommeren/job_scraper/issues/4), [#5](https://github.com/timovanommeren/job_scraper/issues/5).
-- **EU Blue Book traineeship** (EU Commission, not agencies) — not yet covered; see [#6](https://github.com/timovanommeren/job_scraper/issues/6).
+- **BIT** — disabled; see [#4](https://github.com/timovanommeren/job_scraper/issues/4).
 - **EU Careers** — returns 0 outside March/October intake windows. That's expected behaviour.
 
 ---

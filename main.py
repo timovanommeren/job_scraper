@@ -78,6 +78,7 @@ def build_scraper_registry(settings: dict) -> dict:
     from scrapers.trimbos import TrimbosScraper
     from scrapers.bit import BITScraper
     from scrapers.fgv import FGVScraper
+    from scrapers.epso_bluebook import EPSOBluebookScraper
 
     classes = [
         EuraxessScraper,
@@ -96,6 +97,7 @@ def build_scraper_registry(settings: dict) -> dict:
         TrimbosScraper,
         BITScraper,
         FGVScraper,
+        EPSOBluebookScraper,
     ]
     return {cls.source_name: cls(settings) for cls in classes}
 
