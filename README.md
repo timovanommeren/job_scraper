@@ -56,8 +56,9 @@ graph LR
 | `JobScraperFeedbackServer` | `pythonw.exe feedback\server.py` | At every Windows logon (persistent) |
 | `JobScraperDaily` | `run.bat` → `python main.py` | Daily at 07:00 |
 | `JobScraperWeeklyDigest` | `python main.py --weekly-digest` | Every Tuesday at 08:00 |
+| `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Every hour (optional) |
 
-The daily task only sends an email when at least one job scores ≥ 8/10. The weekly digest emails everything found in the last 7 days, regardless of score.
+The daily task only sends an email when at least one job scores ≥ 8/10. The weekly digest emails everything found in the last 7 days, regardless of score. The feedback sync task is only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`.
 
 ---
 
@@ -80,7 +81,7 @@ python main.py --reprocess 10       # Re-score last 10 failed extractions from D
 
 The Flask app at **http://localhost:5001** lets you browse all scraped jobs, filter by relevance tier, and rate them. It starts automatically at login — no manual start needed.
 
-Clicking "Interested" or "Pass" in an email opens the job detail page. Your ratings feed back into the scoring system prompt, so Claude adjusts future scores based on what you liked or passed on.
+Email feedback buttons (Interested / Pass / Rate) work on desktop via the local Flask app. When `CF_WORKER_URL` and `CF_WORKER_SECRET` are configured, the buttons use signed Cloudflare Worker links instead — these work on any device including your phone. Phone feedback syncs to the local DB hourly via `feedback/cf_sync.py`. Your ratings feed back into the scoring system prompt, so Claude adjusts future scores based on what you liked or passed on.
 
 ---
 
