@@ -11,16 +11,6 @@
       "timestamp": "2026-05-28T16:25:42.472953+00:00"
     },
     {
-      "job_id": "78",
-      "url": "https://euraxess.ec.europa.eu/jobs/440558",
-      "title": "Doctoral Researcher: Cultural Evolution and Historical Psychology of Japan",
-      "organization": "Ecole Normale Supérieure",
-      "score_given": 8,
-      "action": "like",
-      "comment": "",
-      "timestamp": "2026-05-29T17:28:53.371948+00:00"
-    },
-    {
       "job_id": "42",
       "url": "https://euraxess.ec.europa.eu/jobs/440604",
       "title": "Doctoral Researcher - Materials Engineering",
@@ -29,6 +19,26 @@
       "action": "like",
       "comment": "",
       "timestamp": "2026-05-29T17:49:28.435026+00:00"
+    },
+    {
+      "job_id": "101",
+      "url": "https://www.academictransfer.com/nl/jobs/361321/phd-candidate-teacherlab-at-the-research-centre-for-education-and-the-labour-market-roa",
+      "title": "PhD Candidate TeacherLab at the Research Centre for Education and the Labour Market (ROA)",
+      "organization": "Maastricht University (UM)",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "I'm not interested in purely economical questions like the labour market",
+      "timestamp": "2026-05-29T18:45:59.318842+00:00"
+    },
+    {
+      "job_id": "78",
+      "url": "https://euraxess.ec.europa.eu/jobs/440558",
+      "title": "Doctoral Researcher: Cultural Evolution and Historical Psychology of Japan",
+      "organization": "Ecole Normale Supérieure",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-29T18:45:59.368300+00:00"
     }
   ]
 }

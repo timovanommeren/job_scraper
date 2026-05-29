@@ -107,13 +107,13 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **LLM:** Anthropic API only. Model: `claude-haiku-4-5-20251001` (default in `extractor_scorer.py`). Override via `CLAUDE_MODEL` env var. **Never use Ollama, never use OpenAI.**
 - **LLM client:** `instructor` library wrapping `anthropic.Anthropic()` — validates structured output against Pydantic schema, retries on validation errors.
 - **Scraping:** `requests` + `beautifulsoup4` for server-rendered pages; `playwright` (async Chromium, headless) for JS-rendered SPAs.
-- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 4 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`. Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
+- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 4 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`. `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
 - **Web framework:** Flask 3.x, dev server only, `host="127.0.0.1"` — localhost only, not network-accessible.
-- **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password.
+- **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password. Each job card includes a 1–10 rating row; pills link to the CF Worker `/feedback` route with a score param.
 - **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
 - **Retry logic:** `tenacity` — all scrapers and LLM calls use `@retry` decorators.
 - **HTTP retry:** `stop_after_attempt(3)`, `wait_exponential(min=2, max=15)` — standard for scrapers. TNI uses `stop_after_attempt(2)` to limit wasted time.
-- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Email feedback buttons are HMAC-signed (24-hour daily bucket). `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it.
+- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Rating row pills and legacy like/pass buttons are HMAC-signed (24-hour daily bucket; action="rate" for pills, action="like"/"pass" for buttons). KV payload: `{job_id, action, score, reason, ts}`. `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it.
 
 ### Required environment variables (`.env` in project root)
 
@@ -134,17 +134,19 @@ CF_WORKER_SECRET         # Optional. Shared HMAC secret (set via wrangler secret
 
 **Three processes, never conflate them.** The Flask app (`feedback/server.py`) runs continuously as a persistent Windows logon process — it is always alive, idle except when handling HTTP requests, and never touches the scraper pipeline. The daily scraper (`main.py` via `JobScraperDaily` Task Scheduler at 07:00) and weekly digest (`main.py --weekly-digest` via `JobScraperWeeklyDigest` at Tuesday 08:00) are short-lived — they start, do their work, and exit. All three share one SQLite database (`db/jobs.db`), which uses WAL mode to allow concurrent reads from Flask while `main.py` writes.
 
-**Data flow in one paragraph.** Each of 17 scrapers returns a list of `RawJob` objects (title, url, source, raw_text, org, location, deadline). For each `RawJob`, `db/dedup.py:is_seen()` computes a SHA-256 hash of the canonical URL and checks the `url_hash` index — already seen jobs are skipped (dedup is O(1), happens before any API call). New jobs go to `agents/extractor_scorer.py:extract_and_score()` which calls the Anthropic API with a system prompt loaded from `config/profile.yaml`, augmented with recent feedback examples from `feedback/feedback_store.json` (this is the feedback loop — past likes and passes are injected as few-shot examples into every scoring call). The structured output (`JobPosting` Pydantic model) is inserted into `db/jobs.db`. After all jobs are scored, `notifier/gmail.py:should_send_daily()` checks if any score ≥ 8 — if yes, an HTML digest is emailed.
+**Data flow in one paragraph.** Each of 17 scrapers returns a list of `RawJob` objects (title, url, source, raw_text, org, location, deadline). For each `RawJob`, `db/dedup.py:is_seen()` computes a SHA-256 hash of the canonical URL and checks the `url_hash` index — already seen jobs are skipped (dedup is O(1), happens before any API call). New jobs go to `agents/extractor_scorer.py:extract_and_score()` which calls the Anthropic API with a system prompt loaded from `config/profile.yaml`, augmented with recent feedback examples from `feedback/feedback_store.json` (this is the feedback loop — past likes/passes with structured tags are injected as few-shot examples, and liked organisations from `config/profile.yaml:liked_organizations` receive a score boost). The structured output (`JobPosting` Pydantic model) is inserted into `db/jobs.db`. After all jobs are scored, `notifier/gmail.py:should_send_daily()` checks if any score ≥ 8 — if yes, an HTML digest is emailed. Each job card in the email contains a 1–10 rating row (two rows of 5 HMAC-signed pills); tapping a pill records the score directly via the Cloudflare Worker without opening a form.
 
 **Where to find things for common changes:**
 - Change how jobs are scored or what fields are extracted → `agents/extractor_scorer.py` + `config/profile.yaml`
 - Change score thresholds (what gets emailed) → `config/settings.yaml` (`strong_match_threshold`, `email_also_min_score`) — loaded at startup by `notifier/gmail.py:_load_thresholds()`
 - Change the email template or subject line → `notifier/gmail.py:build_daily_html()` / `send_weekly_digest()`
+- Change the rating row (number pills) in email → `notifier/gmail.py:job_html()` + `_feedback_action_url()`
 - Add or modify Flask routes → `feedback/server.py`
 - Add a new scraper → `scrapers/` + register in `main.py:build_scraper_registry()`
 - Change what gets inserted into the DB → `db/dedup.py:insert_job()` + `db/schema.sql`
 - Change how feedback affects scoring → `feedback/profile_updater.py:generate_prompt_additions()`
-- Change what Timo's profile says → `config/profile.yaml` (never overwrite — updated dynamically)
+- Change org boost logic (which orgs get boosted) → `feedback/profile_updater.py:update_liked_organizations()`
+- Change what Timo's profile says → `config/profile.yaml` (never overwrite — updated dynamically; `liked_organizations` key is auto-maintained by `update_liked_organizations()`)
 
 Full file dependency diagram: [ARCHITECTURE.md — File Dependency Diagram](ARCHITECTURE.md#file-dependency-diagram).
 

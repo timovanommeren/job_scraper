@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id           TEXT    NOT NULL,
     relevance_score  INTEGER CHECK(relevance_score BETWEEN 1 AND 10),
-    mismatch_reasons TEXT,           -- JSON array of reason keys, nullable
+    mismatch_reasons TEXT,           -- legacy column; superseded by tags (added via migrations.py). Kept for compat.
     comment          TEXT,           -- free-text, nullable
     timestamp        DATETIME DEFAULT CURRENT_TIMESTAMP
 );

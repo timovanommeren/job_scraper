@@ -305,8 +305,8 @@ class RawJob:
 | `scp` | `SCPScraper` | Bloomreach CMS endpoint, requests | ✅ Active |
 | `trimbos` | `TrimbosScraper` | Playwright, `a[href*="vacaturebeschrijving"]` | ✅ Active |
 | `bit` | `BITScraper` | — | ❌ Disabled ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) |
-| `fgv` | `FGVScraper` | Playwright, `a[href^="/vaga/"]` — requests TLS rejected by portal.fgv.br | ✅ Active |
-| `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup, `section.ecl-banner--no-media` status banner | ✅ Active (seasonal) |
+| `fgv` | `FGVScraper` | Playwright (`a[href^="/vaga/"]`) — portal.fgv.br rejects Python TLS | ✅ Active |
+| `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup — EU Commission Blue Book traineeship | ✅ Active (seasonal; applications open ~Mar and Oct) |
 
 
 ### Retry policy
@@ -395,7 +395,8 @@ is_active           INTEGER DEFAULT 1        -- 0 = no longer found on site
 id               INTEGER PK
 job_id           TEXT                    -- foreign key to jobs.id (as string)
 relevance_score  INTEGER (1–10)          -- user's rating (not Claude's)
-mismatch_reasons TEXT                    -- JSON array of reason keys
+mismatch_reasons TEXT                    -- legacy column (unused, kept for compat)
+tags             TEXT                    -- JSON array of tag strings (see PASS_TAGS/LIKE_TAGS in server.py)
 comment          TEXT
 timestamp        DATETIME
 ```
@@ -536,13 +537,16 @@ If `_smtp_send()` raises, `save_fallback_html()` writes the full digest HTML to 
 ## The Feedback Loop
 
 ### How feedback is submitted
-1. User receives email → clicks "✅ Interested" or "❌ Pass" button
-2. Button URL: `http://localhost:5001/fb?id=<job_id>&a=like` → redirects to `/jobs/<id>`
-3. Or user goes directly to `http://localhost:5001/jobs/<id>` → full feedback form
+
+**From email (1–10 rating row):** Each job card in the daily and weekly digest contains a rating row — two rows of 5 pills numbered 1–10. Each pill is a signed HMAC link that goes directly to the Cloudflare Worker `/feedback` route with `?score=N`. Tapping a pill records the score without loading a form. CF Worker derives action from score (≥7 → like, <7 → pass) and stores `{job_id, action, score, reason, ts}` in KV. `cf_sync.py` polls the Worker hourly and writes the result to both SQLite and `feedback_store.json`.
+
+**From Flask (full form):** User goes to `http://localhost:5001/jobs/<id>` → full feedback form.
+
+**Applied button:** After initial feedback is submitted, an "✅ Applied" button appears in the job detail view. Clicking it re-POSTs with `action_override=applied`, recording `action='applied'` regardless of slider score. `action='applied'` is treated as the strongest signal (equivalent to score 10) in `update_liked_organizations()`.
 
 ### What the form captures
 - **Relevance slider** (1–10): user's own score, independent of Claude's score
-- **Mismatch reasons** (checkboxes): wrong topic, wrong location, too senior, etc.
+- **Structured tags** (pill-toggle, multi-select): predefined vocabulary split into "Why pass?" (Wrong field, Too senior/junior, Wrong location, Postdoc, Too quantitative, Too qualitative) and "Why like?" (Great org, Interesting topic, Good methods fit, Paid traineeship, Policy relevance). Tags are stored as a JSON array in both SQLite (`feedback.tags`) and `feedback_store.json`.
 - **Free-text comment**: notes or example jobs
 
 ### Where feedback is stored (two parallel stores)
@@ -574,6 +578,10 @@ Both are written on every feedback submission. They are separate and can theoret
 5. This text is appended to the base system prompt before every Claude API call
 
 So feedback given today affects tomorrow's run's scores. The more feedback you give, the better-calibrated the scoring becomes.
+
+**Structured tags in prompts:** When a feedback item has tags, `_item_note()` appends them to the few-shot line: `"Passed (score 2): Labour market focus [Wrong field, Too quantitative]"`. This gives Claude richer signal than a score alone.
+
+**Org boost:** After each feedback submission (desktop or phone), `profile_updater.py:update_liked_organizations()` counts orgs that appear ≥2 times with score≥8 OR action='applied'. Qualifying orgs (up to 20) are written to `config/profile.yaml` under the `liked_organizations:` key. The next scoring run injects these into the system prompt: "These organisations are strong matches based on past feedback … boost by +1–2 points by default."
 
 ---
 
@@ -614,6 +622,7 @@ job_scraper/
 │   ├── .server.pid               # PID file written by server.py at startup (runtime artifact)
 │   ├── feedback_store.json       # Flat JSON log of like/pass actions (for prompt calibration)
 │   ├── profile_updater.py        # generate_prompt_additions() + build_feedback_footer_html()
+│   │                             #   + update_liked_organizations() (writes liked_organizations to profile.yaml)
 │   ├── server.py                 # Flask app (port 5001): job browser + feedback form
 │   └── store.py                  # Read/write helpers for feedback_store.json
 │
@@ -698,6 +707,8 @@ GMAIL_ADDRESS=you@gmail.com           # Required; Gmail account used to send
 GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx # Required; App Password (not your Gmail password)
 NOTIFY_RECIPIENT=you@gmail.com        # Optional; defaults to GMAIL_ADDRESS if not set
 RAW_TEXT_MAX_CHARS=4000               # Optional; max chars of job text passed to Claude
+CF_WORKER_URL=https://...workers.dev  # Optional; deployed CF Worker URL for phone feedback + rating row
+CF_WORKER_SECRET=...                  # Optional; HMAC secret shared with CF Worker (set via wrangler secret put)
 ```
 
 ---
@@ -712,7 +723,7 @@ RAW_TEXT_MAX_CHARS=4000               # Optional; max chars of job text passed t
 | `uncareers.py` | CloudFront (AWS CDN) returns HTTP 403 to all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | `oecd.py` | Cloudflare bot challenge before any content loads | [#3](https://github.com/timovanommeren/job_scraper/issues/3) |
 | `bit.py` | Cloudflare block; also confirmed 0 open positions at audit | [#4](https://github.com/timovanommeren/job_scraper/issues/4) |
-| `fgv.py` | Original URL defunct (HTTP 404 + SSL errors) | [#5](https://github.com/timovanommeren/job_scraper/issues/5) |
+| `fgv.py` | Playwright only — portal.fgv.br rejects requests TLS — see CLAUDE.md | — |
 
 ### Seasonal scrapers
 
@@ -720,9 +731,9 @@ RAW_TEXT_MAX_CHARS=4000               # Optional; max chars of job text passed t
 |---|---|
 | `eucareers.py` | EU traineeships open ~March and October only. Returns 0 outside intake windows — this is expected. Logs an info message when 0 found. |
 
-### Missing Blue Book traineeship coverage
+### Blue Book traineeship coverage
 
-The EU Commission Blue Book traineeship (EPSO-managed, distinct from agency traineeships) is not covered. See [#6](https://github.com/timovanommeren/job_scraper/issues/6).
+`scrapers/epso_bluebook.py` covers the EU Commission Blue Book traineeship. It is seasonal (applications open ~March and October). Returns 0 with an INFO log outside these windows — this is expected. See closed [#6](https://github.com/timovanommeren/job_scraper/issues/6).
 
 ### Code-level gotchas to be aware of
 
