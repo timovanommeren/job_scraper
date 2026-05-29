@@ -221,14 +221,9 @@ class TestAnalyzeAndSuggest:
         assert len(result.suggestions) == 1
 
     def test_returns_empty_suggestion_list_on_validation_error(self):
-        from pydantic import ValidationError
         from feedback import source_recommender
         mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = ValidationError.from_exception_data(
-            "SourceRecommendation", [], input_type="python"
-        ) if False else Exception("mocked_validation_error")
-
-        # Patch ValidationError directly so it's caught by the except clause
+        # Patch ValidationError to Exception so the except ValidationError clause is triggered
         with patch("feedback.source_recommender.ValidationError", Exception):
             mock_client.chat.completions.create.side_effect = Exception("mocked_validation_error")
             result = source_recommender.analyze_and_suggest(self._jobs(), [], [], mock_client)

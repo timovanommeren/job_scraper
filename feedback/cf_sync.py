@@ -154,12 +154,14 @@ def sync_pending_feedback() -> int:
             try:
                 from db.dedup import get_connection
                 conn = get_connection()
-                conn.execute(
-                    "UPDATE source_suggestions SET status='skipped', skipped_at=? WHERE id=?",
-                    (ts, suggestion_id),
-                )
-                conn.commit()
-                conn.close()
+                try:
+                    conn.execute(
+                        "UPDATE source_suggestions SET status='skipped', skipped_at=? WHERE id=?",
+                        (ts, suggestion_id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
                 logger.info(f"[cf_sync] Skipped suggestion_id={suggestion_id}")
                 synced += 1
             except Exception:
