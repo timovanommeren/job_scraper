@@ -34,13 +34,14 @@ def add_feedback(
     title: str,
     organization: str,
     score: int,
-    action: str,        # "like" or "pass"
+    action: str,        # "like", "pass", or "applied"
     comment: str = "",
+    tags: list | None = None,
 ) -> None:
     """Upsert feedback for a job (replaces any existing entry for the same job_id)."""
     data = _load()
     data["items"] = [x for x in data["items"] if x.get("job_id") != job_id]
-    data["items"].append({
+    entry: dict = {
         "job_id": job_id,
         "url": url,
         "title": title,
@@ -49,7 +50,10 @@ def add_feedback(
         "action": action,
         "comment": comment,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if tags:
+        entry["tags"] = tags
+    data["items"].append(entry)
     _save(data)
 
 
@@ -59,6 +63,7 @@ def get_all() -> list:
 
 def get_feedback_summary() -> dict:
     items = get_all()
-    liked  = [x for x in items if x["action"] == "like"]
-    passed = [x for x in items if x["action"] == "pass"]
-    return {"liked": liked, "passed": passed, "total": len(items)}
+    liked   = [x for x in items if x["action"] == "like"]
+    passed  = [x for x in items if x["action"] == "pass"]
+    applied = [x for x in items if x["action"] == "applied"]
+    return {"liked": liked, "passed": passed, "applied": applied, "total": len(items)}

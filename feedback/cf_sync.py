@@ -188,6 +188,14 @@ def sync_pending_feedback() -> int:
         logger.info(f"[cf_sync] Synced job_id={job_id} action={action} score={score}")
         synced += 1
 
+    # Update org boost once per sync cycle (not per entry — avoids redundant file I/O)
+    if synced > 0:
+        try:
+            from feedback.profile_updater import update_liked_organizations
+            update_liked_organizations()
+        except Exception:
+            logger.warning("[cf_sync] update_liked_organizations failed — continuing")
+
     # Clear all KV entries regardless of individual success/failure
     # (unprocessable entries — bad job_ids — would accumulate otherwise)
     deleted = _clear(worker_url, secret)

@@ -2,18 +2,34 @@
 Reads stored feedback history and generates:
   1. Extra system-prompt text (few-shot calibration examples for Claude)
   2. HTML footer block for the email digest
+  3. Liked-org boost in config/profile.yaml (via update_liked_organizations)
 Both functions degrade gracefully if the feedback store is missing or empty.
 """
 from __future__ import annotations
 import logging
+from collections import Counter
+from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+_PROFILE_PATH = Path(__file__).parent.parent / "config" / "profile.yaml"
+
+
+def _item_note(item: dict) -> str:
+    """Build the annotation suffix for a few-shot example line."""
+    parts = []
+    if item.get("tags"):
+        parts.append(f"[{', '.join(item['tags'])}]")
+    if item.get("comment"):
+        parts.append(f'"{item["comment"]}"')
+    return ("  ← " + " ".join(parts)) if parts else ""
 
 
 def generate_prompt_additions() -> str:
     """
     Returns a block of text to append to the scoring system prompt.
-    Uses the most recent liked/passed jobs as calibration examples.
+    Uses the most recent liked/passed/applied jobs as calibration examples.
+    Pure read-only — never writes to disk.
     """
     try:
         from feedback.store import get_feedback_summary
@@ -31,22 +47,85 @@ def generate_prompt_additions() -> str:
         "══════════════════════════════════════════════════════════",
     ]
 
-    liked  = summary["liked"][-10:]
-    passed = summary["passed"][-10:]
+    liked   = (summary["applied"] + summary["liked"])[-10:]  # applied = strongest signal
+    passed  = summary["passed"][-10:]
 
     if liked:
-        lines.append("\nJOBS USER LIKED — scored too low; boost similar roles:")
+        lines.append("\nJOBS USER LIKED/APPLIED TO — scored too low; boost similar roles:")
         for item in liked:
-            note = f'  ← "{item["comment"]}"' if item.get("comment") else ""
-            lines.append(f'  ✅ [{item["score_given"]}/10] {item["title"]} @ {item["organization"]}{note}')
+            action_label = "APPLIED" if item.get("action") == "applied" else str(item["score_given"]) + "/10"
+            lines.append(f'  ✅ [{action_label}] {item["title"]} @ {item["organization"]}{_item_note(item)}')
 
     if passed:
         lines.append("\nJOBS USER PASSED ON — scored too high; reduce similar roles:")
         for item in passed:
-            note = f'  ← "{item["comment"]}"' if item.get("comment") else ""
-            lines.append(f'  ❌ [{item["score_given"]}/10] {item["title"]} @ {item["organization"]}{note}')
+            lines.append(f'  ❌ [{item["score_given"]}/10] {item["title"]} @ {item["organization"]}{_item_note(item)}')
+
+    # Inject liked-org boost if profile.yaml has liked_organizations
+    try:
+        import yaml
+        profile = yaml.safe_load(_PROFILE_PATH.read_text(encoding="utf-8")) or {}
+        orgs = profile.get("liked_organizations", [])
+        if orgs:
+            lines.append(
+                f"\nORGANISATIONS WITH STRONG TRACK RECORD (boost by +1–2 points by default): "
+                + ", ".join(orgs)
+            )
+    except Exception:
+        pass
 
     return "\n".join(lines)
+
+
+def update_liked_organizations() -> None:
+    """
+    Reads feedback_store.json and writes liked_organizations to config/profile.yaml.
+    Called after each feedback submission (desktop or phone) — NOT from generate_prompt_additions.
+    Threshold: org must appear ≥2 times with score≥8 OR action='applied' before being added.
+    Capped at 20 entries. Deduplicates. Never overwrites other profile.yaml fields.
+    """
+    try:
+        from feedback.store import get_all
+        import yaml
+
+        items = get_all()
+
+        # Count strong-signal mentions per org (score≥8 or applied)
+        org_counts: Counter = Counter(
+            item["organization"]
+            for item in items
+            if (
+                item.get("organization")
+                and (
+                    item.get("action") == "applied"
+                    or int(item.get("score_given", 0)) >= 8
+                )
+            )
+        )
+
+        # Only orgs with 2+ strong signals
+        qualified = [org for org, count in org_counts.most_common() if count >= 2][:20]
+
+        if not qualified:
+            return
+
+        # Load, update, save — preserving all other profile.yaml content
+        profile = yaml.safe_load(_PROFILE_PATH.read_text(encoding="utf-8")) or {}
+        existing = profile.get("liked_organizations", [])
+        merged = list(dict.fromkeys(existing + qualified))[:20]  # deduplicate, cap
+
+        if merged == existing:
+            return  # nothing changed
+
+        profile["liked_organizations"] = merged
+        _PROFILE_PATH.write_text(
+            yaml.dump(profile, allow_unicode=True, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        log.info(f"[profile_updater] liked_organizations updated: {merged}")
+
+    except Exception:
+        log.exception("[profile_updater] update_liked_organizations failed")
 
 
 def build_feedback_footer_html() -> str:
@@ -61,10 +140,10 @@ def build_feedback_footer_html() -> str:
     n_passed = len(summary["passed"])
     total    = summary["total"]
 
+    n_applied = len(summary.get("applied", []))
     if total == 0:
         body = (
-            "No feedback yet — use the <strong>✅ Interested</strong> / <strong>❌ Pass</strong> "
-            "buttons above to calibrate future digests."
+            "No feedback yet — tap a number in the rating row above to calibrate future digests."
         )
     else:
         recent_pass_titles = [
@@ -73,9 +152,10 @@ def build_feedback_footer_html() -> str:
         ]
         recent_like_titles = [
             (x["title"][:38] + "…") if len(x["title"]) > 38 else x["title"]
-            for x in summary["liked"][-3:]
+            for x in (summary.get("applied", []) + summary["liked"])[-3:]
         ]
-        parts = [f"<strong>{n_liked} interested · {n_passed} passed</strong> so far."]
+        applied_str = f" · {n_applied} applied" if n_applied else ""
+        parts = [f"<strong>{n_liked} interested · {n_passed} passed{applied_str}</strong> so far."]
         if recent_pass_titles:
             parts.append(f"Recent passes: {', '.join(recent_pass_titles)}")
         if recent_like_titles:

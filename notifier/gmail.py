@@ -38,6 +38,10 @@ def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> 
     sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
 
     if action == "rate":
+        if score is not None:
+            # Rating row pill: direct score recording at /feedback (no form shown)
+            return f"{cf_url}/feedback?job_id={job_id}&sig={sig}&score={score}"
+        # Old "Rate" button: open slider form at /rate
         return f"{cf_url}/rate?job_id={job_id}&sig={sig}"
     return f"{cf_url}/feedback?job_id={job_id}&action={action}&sig={sig}"
 
@@ -158,19 +162,41 @@ def job_html(job: sqlite3.Row) -> str:
 
     dl_badge = _deadline_badge_email(job["deadline"])
 
-    # Feedback buttons — use signed CF Worker URLs when configured, localhost otherwise
-    jid    = str(job["id"])
-    jurl   = urlquote(job["url"] or "", safe="")
-    jtitle = urlquote(job["title"] or "", safe="")
-    jorg   = urlquote(job["organization"] or "", safe="")
-
-    fb_like = _feedback_action_url(jid, "like", score)
-    fb_pass = _feedback_action_url(jid, "pass", score)
-    fb_rate = _feedback_action_url(jid, "rate", score)
+    jid = str(job["id"])
 
     deadline_line = ""
     if job["deadline"]:
         deadline_line = f'<br>⏰ {job["deadline"]} &nbsp; {dl_badge}'
+
+    # Rating row — two rows of 5 pills (1-5 top, 6-10 bottom)
+    # Color zones: 1-3 grey (pass), 4-6 amber (uncertain), 7-10 green (like)
+    _pill_colors = {
+        1: ("#e5e7eb", "#6b7280"), 2: ("#e5e7eb", "#6b7280"), 3: ("#e5e7eb", "#6b7280"),
+        4: ("#fef3c7", "#92400e"), 5: ("#fef3c7", "#92400e"), 6: ("#fef3c7", "#92400e"),
+        7: ("#dcfce7", "#166534"), 8: ("#dcfce7", "#166534"),
+        9: ("#dcfce7", "#166534"), 10: ("#dcfce7", "#166534"),
+    }
+    _pill_style = (
+        "display:inline-block;width:40px;height:44px;line-height:44px;"
+        "text-align:center;border-radius:6px;font-family:Arial,sans-serif;"
+        "font-size:15px;font-weight:bold;text-decoration:none;margin:3px;"
+    )
+
+    def _pill(n: int) -> str:
+        bg, fg = _pill_colors[n]
+        url = _feedback_action_url(jid, "rate", n)
+        return f'<a href="{url}" style="{_pill_style}background:{bg};color:{fg}">{n}</a>'
+
+    row1 = "".join(_pill(n) for n in range(1, 6))
+    row2 = "".join(_pill(n) for n in range(6, 11))
+    rating_row = (
+        '<div style="margin-top:10px">'
+        '<div style="font-size:11px;color:#9ca3af;margin-bottom:4px">'
+        'How relevant? &nbsp;(1 = not relevant · 10 = perfect fit)</div>'
+        f'<div>{row1}</div>'
+        f'<div>{row2}</div>'
+        '</div>'
+    )
 
     return f"""
 <div style="border:1px solid #ddd;border-radius:6px;padding:14px;margin-bottom:12px;font-family:Arial,sans-serif">
@@ -191,24 +217,13 @@ def job_html(job: sqlite3.Row) -> str:
     <em>{job['relevance_reason'] or ''}</em>
   </div>
   <div style="margin:6px 0">{tag_badges}</div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
+  <div style="margin-top:8px">
     <a href="{apply_url}"
        style="background:#2563eb;color:#fff;padding:6px 14px;border-radius:4px;text-decoration:none;font-size:13px">
       → Apply
     </a>
-    <a href="{fb_like}"
-       style="background:#dcfce7;color:#16a34a;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;border:1px solid #bbf7d0">
-      ✅ Interested
-    </a>
-    <a href="{fb_pass}"
-       style="background:#fef2f2;color:#dc2626;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;border:1px solid #fecaca">
-      ❌ Pass
-    </a>
-    <a href="{fb_rate}"
-       style="color:#94a3b8;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;border:1px solid #e2e8f0">
-      💬 Rate
-    </a>
   </div>
+  {rating_row}
 </div>"""
 
 

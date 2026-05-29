@@ -30,17 +30,14 @@ from flask import Flask, request, render_template_string, redirect, url_for, g
 app = Flask(__name__)
 log = logging.getLogger("feedback_server")
 
-MISMATCH_OPTIONS = [
-    ("wrong_topic",          "Wrong topic"),
-    ("wrong_location",       "Wrong location"),
-    ("too_senior",           "Too senior"),
-    ("too_junior",           "Too junior"),
-    ("wrong_org_type",       "Wrong organisation type"),
-    ("not_research_enough",  "Not enough research focus"),
-    ("not_writing_enough",   "Not enough writing/communication"),
-    ("other",                "Other"),
-]
-ALLOWED_REASONS = {k for k, _ in MISMATCH_OPTIONS}
+# Unified tag vocabulary — used in feedback form and stored in SQLite + feedback_store.json
+PASS_TAGS  = ["Wrong field", "Too senior/junior", "Wrong location", "Postdoc",
+               "Too quantitative", "Too qualitative"]
+LIKE_TAGS  = ["Great org", "Interesting topic", "Good methods fit",
+               "Paid traineeship", "Policy relevance"]
+ALL_TAGS   = PASS_TAGS + LIKE_TAGS
+ALLOWED_TAGS = set(ALL_TAGS)
+
 PAGE_SIZE = 20
 
 
@@ -61,17 +58,16 @@ def _close_db(exc):
 
 
 def _write_feedback_sqlite(job_id: str, relevance_score: int,
-                            mismatch_reasons: list, comment: str) -> None:
+                            tags: list, comment: str) -> None:
     """Upsert into the SQLite feedback table."""
     conn = _get_db()
     try:
-        # Remove any prior feedback for this job so there's always one authoritative record
         conn.execute("DELETE FROM feedback WHERE job_id = ?", (job_id,))
         conn.execute(
-            """INSERT INTO feedback (job_id, relevance_score, mismatch_reasons, comment)
+            """INSERT INTO feedback (job_id, relevance_score, tags, comment)
                VALUES (?, ?, ?, ?)""",
             (job_id, relevance_score,
-             json.dumps(mismatch_reasons) if mismatch_reasons else None,
+             json.dumps(tags) if tags else None,
              comment or None),
         )
         conn.commit()
@@ -80,11 +76,12 @@ def _write_feedback_sqlite(job_id: str, relevance_score: int,
 
 
 def _write_feedback_json(job_id: str, url: str, title: str, org: str,
-                          score: int, action: str, comment: str) -> None:
+                          score: int, action: str, comment: str,
+                          tags: list | None = None) -> None:
     """Keep the JSON store up-to-date (used by profile_updater for prompt additions)."""
     try:
         from feedback.store import add_feedback
-        add_feedback(job_id, url, title, org, score, action, comment)
+        add_feedback(job_id, url, title, org, score, action, comment, tags=tags or [])
     except Exception:
         log.exception("JSON feedback store write failed")
 
@@ -164,11 +161,12 @@ label.field-label{display:block;font-size:14px;font-weight:600;color:#374151;mar
 input[type=range]{width:100%;accent-color:#2563eb;cursor:pointer}
 .score-label{font-size:16px;font-weight:bold;color:#1a1a2e;margin:6px 0 4px;min-height:26px}
 .score-hint{font-size:12px;color:#64748b;margin-bottom:12px}
-.cb-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px}
-.cb-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #e2e8f0;
-         border-radius:6px;cursor:pointer;font-size:13px;background:#f8fafc;user-select:none}
-.cb-item input{cursor:pointer;accent-color:#2563eb}
-.cb-item:has(input:checked){background:#eff6ff;border-color:#bfdbfe}
+/* Tag pill toggles */
+.tag-group-label{font-size:12px;color:#6b7280;font-weight:600;margin:12px 0 6px}
+.tag-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+.tag-pill{padding:4px 12px;border:1px solid #d1d5db;border-radius:9999px;font-size:13px;
+          cursor:pointer;background:#f9fafb;color:#374151;user-select:none;transition:all .1s}
+.tag-pill.selected{background:#2563eb;border-color:#2563eb;color:#fff}
 textarea.field{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;
                font-size:14px;resize:vertical;min-height:80px}
 .detail-back{font-size:13px;color:#2563eb;text-decoration:none;display:inline-block;margin-bottom:12px}
@@ -280,6 +278,43 @@ def job_list():
 
     cards_html = "\n".join(cards) if cards else "<p style='color:#94a3b8'>No jobs found.</p>"
 
+    # Feedback-saved banner (set after form submit via ?feedback=saved)
+    banner_html = ""
+    if request.args.get("feedback") == "saved":
+        banner_html = (
+            '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'
+            'padding:10px 14px;font-size:13px;color:#166534;margin-bottom:12px">'
+            '✅ Feedback saved — Claude will use this in future scoring runs.'
+            '</div>'
+        )
+
+    # Calibration health footer
+    calib_html = ""
+    try:
+        from feedback.store import get_feedback_summary
+        fb_summary = get_feedback_summary()
+        n_total   = fb_summary["total"]
+        n_liked   = len(fb_summary["liked"]) + len(fb_summary.get("applied", []))
+        n_passed  = len(fb_summary["passed"])
+        if n_total == 0:
+            calib_html = (
+                '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;'
+                'padding:10px 14px;font-size:13px;color:#64748b;margin-bottom:12px">'
+                '📊 No feedback yet — rate jobs to calibrate future scoring.'
+                '</div>'
+            )
+        else:
+            calib_html = (
+                '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;'
+                'padding:10px 14px;font-size:13px;color:#64748b;margin-bottom:12px">'
+                f'📊 Claude has learned from <strong>{n_total} rating{"s" if n_total != 1 else ""}</strong> '
+                f'({n_liked} interested · {n_passed} passed). '
+                'Keep rating to improve accuracy.'
+                '</div>'
+            )
+    except Exception:
+        pass
+
     # Pager
     def plink(p):
         return f"/jobs?tier={tier}&page={p}"
@@ -295,7 +330,7 @@ def job_list():
     pager_html = f'<div class="pager">{"".join(pager_items)}</div>' if total_pages > 1 else ""
 
     body = f"""<h2>Jobs</h2>
-{filter_html}
+{banner_html}{calib_html}{filter_html}
 {cards_html}
 {pager_html}"""
     return _page_html("Jobs", body)
@@ -324,24 +359,31 @@ def job_detail(job_id: int):
 
     existing_fb_html = ""
     if fb:
-        reasons = json.loads(fb["mismatch_reasons"] or "[]")
-        reason_labels = [label for key, label in MISMATCH_OPTIONS if key in reasons]
+        fb_tags = json.loads(fb["tags"] or "[]") if fb["tags"] else []
         fb_score = fb["relevance_score"] or "—"
+        applied_btn = (
+            f'<form method="post" action="/jobs/{job_id}/feedback" style="display:inline">'
+            '<input type="hidden" name="relevance_score" value="10">'
+            '<input type="hidden" name="action_override" value="applied">'
+            '<button type="submit" style="background:#16a34a;color:#fff;padding:6px 14px;'
+            'border-radius:5px;border:none;cursor:pointer;font-size:13px;margin-top:10px">'
+            '✅ Applied</button></form>'
+        )
         existing_fb_html = f"""<div class="existing-fb">
   ✅ Feedback already submitted — Score: <strong>{fb_score}/10</strong>
-  {f"&nbsp;|&nbsp; Reasons: {', '.join(reason_labels)}" if reason_labels else ""}
+  {f"&nbsp;|&nbsp; Tags: {', '.join(fb_tags)}" if fb_tags else ""}
   {f"<br>Comment: {fb['comment']}" if fb['comment'] else ""}
   <br><small style="color:#16a34a">You can submit again to update it.</small>
+  <br>{applied_btn} &nbsp; <small style="color:#16a34a">Mark as actually applied</small>
 </div>"""
 
-    # Build mismatch checkbox grid
-    cb_items = "".join(
-        f"""<label class="cb-item">
-  <input type="checkbox" name="mismatch_reasons" value="{key}">
-  {label}
-</label>"""
-        for key, label in MISMATCH_OPTIONS
-    )
+    # Build pill-toggle tag section
+    def _pill_group(label: str, tag_list: list) -> str:
+        pills = "".join(
+            f'<span class="tag-pill" data-tag="{t}" onclick="toggleTag(this)">{t}</span>'
+            for t in tag_list
+        )
+        return f'<div class="tag-group-label">{label}</div><div class="tag-pills">{pills}</div>'
 
     body = f"""<a class="detail-back" href="/jobs">← Back to all jobs</a>
 
@@ -385,9 +427,13 @@ def job_detail(job_id: int):
       <div class="score-hint">1–3 = not relevant &nbsp;·&nbsp; 4–6 = possibly relevant &nbsp;·&nbsp; 7–10 = strong match</div>
     </div>
 
-    <div class="form-section" id="mismatch-section" style="display:none">
-      <label class="field-label">Why is this not a perfect match? <span style="font-weight:normal;color:#94a3b8">(pick all that apply)</span></label>
-      <div class="cb-grid">{cb_items}</div>
+    <div class="form-section">
+      <label class="field-label">Why? <span style="font-weight:normal;color:#94a3b8">(optional tags — pick any)</span></label>
+      <div id="tag-section">
+        {_pill_group("Why pass?", PASS_TAGS)}
+        {_pill_group("Why like?", LIKE_TAGS)}
+      </div>
+      <input type="hidden" name="tags" id="tags-hidden" value="">
     </div>
 
     <div class="form-section">
@@ -402,6 +448,8 @@ def job_detail(job_id: int):
 
 <script>
 var sliderTouched = false;
+var selectedTags = [];
+
 function onSlide(val) {{
   sliderTouched = true;
   val = parseInt(val);
@@ -409,12 +457,37 @@ function onSlide(val) {{
                 'Possibly relevant','Possibly relevant','Possibly relevant',
                 'Strong match','Strong match','Strong match','Strong match'];
   document.getElementById('score-label').textContent = val + '/10 — ' + labels[val];
-  document.getElementById('mismatch-section').style.display = val <= 6 ? 'block' : 'none';
 }}
+
+function toggleTag(el) {{
+  var tag = el.getAttribute('data-tag');
+  if (el.classList.contains('selected')) {{
+    el.classList.remove('selected');
+    selectedTags = selectedTags.filter(function(t) {{ return t !== tag; }});
+  }} else {{
+    el.classList.add('selected');
+    selectedTags.push(tag);
+  }}
+  document.getElementById('tags-hidden').value = selectedTags.join('||');
+}}
+
 document.getElementById('fb-form').addEventListener('submit', function(e) {{
   if (!sliderTouched) {{
     e.preventDefault();
     alert('Please move the slider to rate this job before submitting.');
+    return;
+  }}
+  // Convert tags hidden field to individual fields for getlist()
+  var tagsVal = document.getElementById('tags-hidden').value;
+  document.getElementById('tags-hidden').name = '';
+  if (tagsVal) {{
+    tagsVal.split('||').forEach(function(tag) {{
+      var inp = document.createElement('input');
+      inp.type = 'hidden';
+      inp.name = 'tags';
+      inp.value = tag;
+      document.getElementById('fb-form').appendChild(inp);
+    }});
   }}
 }});
 </script>"""
@@ -440,35 +513,36 @@ def submit_feedback(job_id: int):
     except (ValueError, TypeError):
         relevance_score = 5
 
-    raw_reasons = request.form.getlist("mismatch_reasons")
-    mismatch_reasons = [r for r in raw_reasons if r in ALLOWED_REASONS]
+    raw_tags = request.form.getlist("tags")
+    tags = [t for t in raw_tags if t in ALLOWED_TAGS]
     comment = request.form.get("comment", "").strip()
 
+    # Detect "Applied" action — form value from the Applied button
+    action_override = request.form.get("action_override", "")
+    if action_override == "applied":
+        action = "applied"
+    else:
+        action = "like" if relevance_score >= 7 else "pass"
+
     # Write to SQLite (authoritative)
-    _write_feedback_sqlite(str(job_id), relevance_score, mismatch_reasons, comment)
+    _write_feedback_sqlite(str(job_id), relevance_score, tags, comment)
 
     # Write to JSON store (for profile_updater prompt additions)
-    action = "like" if relevance_score >= 7 else "pass"
     _write_feedback_json(
         str(job_id), job["url"] or "", job["title"] or "",
-        job["organization"] or "", relevance_score, action, comment,
+        job["organization"] or "", relevance_score, action, comment, tags=tags,
     )
 
-    log.info(f"Feedback submitted: job_id={job_id} score={relevance_score} reasons={mismatch_reasons}")
+    # Update org boost in profile.yaml (requires 2+ strong signals per org)
+    try:
+        from feedback.profile_updater import update_liked_organizations
+        update_liked_organizations()
+    except Exception:
+        log.warning("update_liked_organizations failed — continuing")
 
-    thanks = f"""<div class="card" style="text-align:center;padding:32px">
-  <div style="font-size:48px">{'✅' if relevance_score >= 7 else '📝'}</div>
-  <h2>Feedback saved!</h2>
-  <p style="color:#64748b">Score: <strong>{relevance_score}/10</strong>
-  {f'&nbsp;·&nbsp; Reasons: {", ".join(mismatch_reasons)}' if mismatch_reasons else ''}
-  </p>
-  <p style="color:#64748b;font-size:13px">This will calibrate scoring in future runs.</p>
-  <div style="display:flex;gap:10px;justify-content:center;margin-top:16px">
-    <a class="btn btn-outline" href="/jobs/{job_id}">← Back to job</a>
-    <a class="btn" href="/jobs">All jobs</a>
-  </div>
-</div>"""
-    return _page_html("Feedback saved", thanks)
+    log.info(f"Feedback submitted: job_id={job_id} score={relevance_score} action={action} tags={tags}")
+
+    return redirect(url_for("job_list", feedback="saved"))
 
 
 # ── Feedback list ───────────────────────────────────────────────────────────────
@@ -481,7 +555,7 @@ def feedback_list():
 
     total = conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
     rows  = conn.execute(
-        """SELECT f.id, f.job_id, f.relevance_score, f.mismatch_reasons, f.comment,
+        """SELECT f.id, f.job_id, f.relevance_score, f.tags, f.comment,
                   f.timestamp, j.title, j.organization
            FROM feedback f
            LEFT JOIN jobs j ON j.id = CAST(f.job_id AS INTEGER)
@@ -495,8 +569,7 @@ def feedback_list():
     if rows:
         trows = []
         for r in rows:
-            reasons = json.loads(r["mismatch_reasons"] or "[]")
-            reason_labels = [label for key, label in MISMATCH_OPTIONS if key in reasons]
+            row_tags = json.loads(r["tags"] or "[]") if r["tags"] else []
             score = r["relevance_score"] or "—"
             score_style = ""
             if isinstance(score, int):
@@ -508,7 +581,7 @@ def feedback_list():
   <td><a href="/jobs/{r['job_id']}" style="color:#2563eb;text-decoration:none">{r['title'] or '—'}</a></td>
   <td>{r['organization'] or '—'}</td>
   <td style="{score_style}">{score}</td>
-  <td>{", ".join(reason_labels) or "—"}</td>
+  <td>{", ".join(row_tags) or "—"}</td>
   <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis">{r['comment'] or '—'}</td>
   <td style="white-space:nowrap;color:#94a3b8">{ts}</td>
 </tr>""")
@@ -516,7 +589,7 @@ def feedback_list():
         table_html = f"""<table>
 <thead><tr>
   <th>Job</th><th>Organisation</th><th>Score</th>
-  <th>Reasons</th><th>Comment</th><th>Date</th>
+  <th>Tags</th><th>Comment</th><th>Date</th>
 </tr></thead>
 <tbody>{"".join(trows)}</tbody>
 </table>"""

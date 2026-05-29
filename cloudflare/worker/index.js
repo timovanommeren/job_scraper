@@ -42,13 +42,19 @@ async function verifyActionSig(secret, jobId, action, sig) {
 
 // ── HTML helpers ──────────────────────────────────────────────────────────────
 
-function thanksPage(action) {
-  const emoji = action === "like" ? "✅" : action === "pass" ? "❌" : "📝";
-  const msg = action === "like"
-    ? "Marked as Interested"
-    : action === "pass"
-    ? "Marked as Pass"
-    : "Rating saved";
+function thanksPage(action, score) {
+  let emoji, msg;
+  if (typeof score === "number") {
+    // Score-aware tiers from the rating row
+    if (score >= 7) { emoji = "✅"; msg = `Marked as Interested · ${score}/10`; }
+    else if (score >= 5) { emoji = "📝"; msg = `Rating saved · ${score}/10`; }
+    else { emoji = "❌"; msg = `Marked as Pass · ${score}/10`; }
+  } else {
+    emoji = action === "like" ? "✅" : action === "pass" ? "❌" : "📝";
+    msg = action === "like" ? "Marked as Interested"
+        : action === "pass" ? "Marked as Pass"
+        : "Rating saved";
+  }
   return new Response(
     `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
@@ -147,25 +153,41 @@ export default {
     const secret = env.CF_WORKER_SECRET;
     const kv = env.FEEDBACK_KV;
 
-    // GET /feedback — quick like/pass from email button
+    // GET /feedback — rating row tap from email (score=N) or legacy like/pass button
     if (request.method === "GET" && path === "/feedback") {
       const jobId = params.get("job_id") || "";
-      const action = params.get("action") || "";
       const sig = params.get("sig") || "";
+      const scoreRaw = params.get("score");
 
-      if (!jobId || !["like", "pass"].includes(action) || !sig) {
-        return errorPage(400, "Missing or invalid parameters.");
-      }
-      if (!(await verifyActionSig(secret, jobId, action, sig))) {
-        return errorPage(403, "Link expired or invalid. Use a fresh email.");
+      // Rating row: action is always "rate", score comes from the URL param
+      // Legacy buttons: action is "like" or "pass", no score param
+      let action = params.get("action") || "";
+      let score = null;
+
+      if (scoreRaw !== null) {
+        // Rating row path — action is "rate" (signed), score is unsigned param
+        score = Math.max(1, Math.min(10, parseInt(scoreRaw, 10) || 5));
+        action = score >= 7 ? "like" : "pass";
+        if (!jobId || !sig) return errorPage(400, "Missing parameters.");
+        if (!(await verifyActionSig(secret, jobId, "rate", sig))) {
+          return errorPage(403, "Link expired or invalid. Use a fresh email.");
+        }
+      } else {
+        // Legacy like/pass button path
+        if (!jobId || !["like", "pass"].includes(action) || !sig) {
+          return errorPage(400, "Missing or invalid parameters.");
+        }
+        if (!(await verifyActionSig(secret, jobId, action, sig))) {
+          return errorPage(403, "Link expired or invalid. Use a fresh email.");
+        }
       }
 
       await kv.put(
         `feedback:${jobId}`,
-        JSON.stringify({ job_id: jobId, action, score: null, reason: "", ts: new Date().toISOString() }),
+        JSON.stringify({ job_id: jobId, action, score, reason: "", ts: new Date().toISOString() }),
         { expirationTtl: KV_TTL }
       );
-      return thanksPage(action);
+      return thanksPage(action, score);
     }
 
     // GET /rate — serve mobile rating form
@@ -210,7 +232,7 @@ export default {
         JSON.stringify({ job_id: jobId, action, score, reason, ts: new Date().toISOString() }),
         { expirationTtl: KV_TTL }
       );
-      return thanksPage("rate");
+      return thanksPage(action, score);
     }
 
     // GET /poll — return all pending KV entries (requires Authorization header)

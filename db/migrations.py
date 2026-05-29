@@ -27,6 +27,7 @@ def init_db() -> None:
         conn.commit()
         # Safe migrations for databases created before these columns existed
         _safe_add_column(conn, "jobs", "deadline", "TEXT")
+        _safe_add_column(conn, "feedback", "tags", "TEXT")  # JSON list of tag strings
         logger.info(f"Database initialised at {DB_PATH}")
     except Exception:
         logger.exception("Database initialisation failed")
