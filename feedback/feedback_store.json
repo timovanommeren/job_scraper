@@ -9,6 +9,26 @@
       "action": "like",
       "comment": "Test feedback submission",
       "timestamp": "2026-05-28T16:25:42.472953+00:00"
+    },
+    {
+      "job_id": "78",
+      "url": "https://euraxess.ec.europa.eu/jobs/440558",
+      "title": "Doctoral Researcher: Cultural Evolution and Historical Psychology of Japan",
+      "organization": "Ecole Normale Supérieure",
+      "score_given": 8,
+      "action": "like",
+      "comment": "",
+      "timestamp": "2026-05-29T17:28:53.371948+00:00"
+    },
+    {
+      "job_id": "42",
+      "url": "https://euraxess.ec.europa.eu/jobs/440604",
+      "title": "Doctoral Researcher - Materials Engineering",
+      "organization": "Universidade do Minho",
+      "score_given": 8,
+      "action": "like",
+      "comment": "",
+      "timestamp": "2026-05-29T17:49:28.435026+00:00"
     }
   ]
 }
