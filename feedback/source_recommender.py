@@ -248,9 +248,13 @@ def _load_min_jobs() -> int:
         return 5
 
 
-def generate_suggestions(db, client=None, test_mode: bool = False) -> Optional[SourceRecommendation]:
+def generate_suggestions(db=None, client=None, test_mode: bool = False) -> Optional[SourceRecommendation]:
     """
     Main entry point called from notifier/gmail.py during weekly digest.
+
+    db may be None (or omitted) — in that case a fresh connection is opened
+    internally.  This is necessary when called from a ThreadPoolExecutor worker
+    because SQLite connections cannot be shared across threads.
 
     - Queries high-rated jobs; returns None if below the minimum threshold.
     - Calls Claude to produce a field profile + up to 3 org suggestions.
@@ -262,6 +266,11 @@ def generate_suggestions(db, client=None, test_mode: bool = False) -> Optional[S
     - Not enough high-rated jobs to build a meaningful profile.
     - A fatal exception occurs (logged at WARNING, digest continues unaffected).
     """
+    _own_db = False
+    if db is None:
+        from db.dedup import get_connection
+        db = get_connection()
+        _own_db = True
     try:
         # Drift guard: warn if registry diverges from SOURCE_NAME_TO_DISPLAY.
         # This is informational only — a missing mapping does not crash the digest.
@@ -338,3 +347,6 @@ def generate_suggestions(db, client=None, test_mode: bool = False) -> Optional[S
     except Exception:
         logger.exception("source_recommender: generate_suggestions failed — weekly digest continues without suggestions")
         return None
+    finally:
+        if _own_db:
+            db.close()

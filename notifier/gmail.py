@@ -423,7 +423,7 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
     try:
         from feedback.source_recommender import generate_suggestions
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(generate_suggestions, conn, None, test_mode)
+            future = executor.submit(generate_suggestions, None, None, test_mode)
             recommendation = future.result(timeout=90)
     except Exception:
         logger.warning("Weekly digest: source recommender timed out or failed — continuing without suggestions")
