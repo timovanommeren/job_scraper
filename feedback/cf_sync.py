@@ -146,6 +146,7 @@ def sync_pending_feedback() -> int:
         action = entry.get("action", "pass")
         score_raw = entry.get("score")  # None for quick like/pass, int for /rate form
         reason = entry.get("reason", "")
+        tags = entry.get("tags") or []  # list of tag strings from /rate form, empty for quick taps
 
         if not job_id:
             logger.warning("[cf_sync] Entry with empty job_id — skipping")
@@ -177,6 +178,7 @@ def sync_pending_feedback() -> int:
                 score=score,
                 action=action,
                 comment=reason,
+                tags=tags or None,
             )
         except Exception:
             logger.exception(f"[cf_sync] feedback_store write failed for job_id={job_id}")

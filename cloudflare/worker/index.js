@@ -95,30 +95,58 @@ function ratePage(jobId, sig) {
   label{display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:#374151}
   input[type=range]{width:100%;accent-color:#2563eb;cursor:pointer}
   .score-display{font-size:18px;font-weight:bold;margin:6px 0 4px;min-height:28px;color:#1a1a2e}
+  .tag-group-label{font-size:12px;color:#6b7280;font-weight:600;margin:14px 0 6px}
+  .tag-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+  .tag-pill{padding:6px 14px;border:1px solid #d1d5db;border-radius:9999px;font-size:14px;
+            cursor:pointer;background:#f9fafb;color:#374151;user-select:none;
+            -webkit-tap-highlight-color:transparent}
+  .tag-pill.selected{background:#2563eb;border-color:#2563eb;color:#fff}
   textarea{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;
            border-radius:6px;font-size:14px;resize:vertical;min-height:70px;margin-top:4px}
-  .btn{display:block;width:100%;padding:12px;background:#2563eb;color:#fff;
+  .btn{display:block;width:100%;padding:14px;background:#2563eb;color:#fff;
        border:none;border-radius:6px;font-size:16px;font-weight:600;
        cursor:pointer;margin-top:16px}
   .btn:hover{background:#1d4ed8}
 </style></head><body>
 <div class="card">
   <h2>Rate this job</h2>
-  <form method="POST" action="/rate">
+  <form method="POST" action="/rate" id="rateForm">
     <input type="hidden" name="job_id" value="${jobId}">
     <input type="hidden" name="sig" value="${sig}">
+    <input type="hidden" name="tags" id="tagsHidden" value="">
 
     <label for="score">How relevant is this job? <span id="score-display" class="score-display"></span></label>
     <input type="range" id="score" name="score" min="1" max="10" value="5"
            oninput="updateScore(this.value)">
 
+    <div class="tag-group-label">Why pass? (optional)</div>
+    <div class="tag-pills" id="passGroup">
+      <span class="tag-pill" onclick="toggleTag(this)">Wrong field</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Too senior/junior</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Wrong location</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Postdoc</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Too quantitative</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Too qualitative</span>
+    </div>
+
+    <div class="tag-group-label">Why like? (optional)</div>
+    <div class="tag-pills" id="likeGroup">
+      <span class="tag-pill" onclick="toggleTag(this)">Great org</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Interesting topic</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Good methods fit</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Paid traineeship</span>
+      <span class="tag-pill" onclick="toggleTag(this)">Policy relevance</span>
+    </div>
+
     <label for="reason" style="margin-top:14px">Optional note</label>
-    <textarea id="reason" name="reason" placeholder="Why is it a good or bad match?"></textarea>
+    <textarea id="reason" name="reason" placeholder="Anything else?"></textarea>
 
     <button type="submit" class="btn">Save rating</button>
   </form>
 </div>
 <script>
+var selectedTags = [];
+
 function updateScore(v) {
   v = parseInt(v);
   var labels = ['','Not relevant','Not relevant','Not relevant',
@@ -127,6 +155,18 @@ function updateScore(v) {
   document.getElementById('score-display').textContent = v + '/10 — ' + labels[v];
 }
 updateScore(5);
+
+function toggleTag(el) {
+  var tag = el.textContent;
+  if (el.classList.contains('selected')) {
+    el.classList.remove('selected');
+    selectedTags = selectedTags.filter(function(t) { return t !== tag; });
+  } else {
+    el.classList.add('selected');
+    selectedTags.push(tag);
+  }
+  document.getElementById('tagsHidden').value = selectedTags.join('||');
+}
 </script>
 </body></html>`,
     { status: 200, headers: { "Content-Type": "text/html;charset=UTF-8" } }
@@ -219,6 +259,8 @@ export default {
       const reason = (body.get("reason") || "").trim().slice(0, 500);
       const score = Math.max(1, Math.min(10, isNaN(scoreRaw) ? 5 : scoreRaw));
       const action = score >= 7 ? "like" : "pass";
+      const tagsRaw = (body.get("tags") || "").trim();
+      const tags = tagsRaw ? tagsRaw.split("||").map(t => t.trim()).filter(Boolean) : [];
 
       if (!jobId || !sig) {
         return errorPage(400, "Missing parameters.");
@@ -229,7 +271,7 @@ export default {
 
       await kv.put(
         `feedback:${jobId}`,
-        JSON.stringify({ job_id: jobId, action, score, reason, ts: new Date().toISOString() }),
+        JSON.stringify({ job_id: jobId, action, score, reason, tags, ts: new Date().toISOString() }),
         { expirationTtl: KV_TTL }
       );
       return thanksPage(action, score);
