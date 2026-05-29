@@ -651,6 +651,25 @@ def comment_compat():
     return redirect(url_for("job_list"))
 
 
+@app.route("/skip-suggestion")
+def skip_suggestion():
+    """Desktop fallback for skipping a source suggestion.
+    Mobile email links use the CF Worker route instead."""
+    from datetime import datetime
+    suggestion_id = request.args.get("id", type=int)
+    if not suggestion_id:
+        return "Missing id", 400
+    db = _get_db()
+    result = db.execute(
+        "UPDATE source_suggestions SET status='skipped', skipped_at=? WHERE id=?",
+        (datetime.utcnow().isoformat(), suggestion_id),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return "Suggestion not found", 404
+    return "Skipped. You won't see this suggestion again.", 200
+
+
 @app.route("/health")
 def health():
     return "OK", 200

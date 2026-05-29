@@ -107,13 +107,13 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **LLM:** Anthropic API only. Model: `claude-haiku-4-5-20251001` (default in `extractor_scorer.py`). Override via `CLAUDE_MODEL` env var. **Never use Ollama, never use OpenAI.**
 - **LLM client:** `instructor` library wrapping `anthropic.Anthropic()` — validates structured output against Pydantic schema, retries on validation errors.
 - **Scraping:** `requests` + `beautifulsoup4` for server-rendered pages; `playwright` (async Chromium, headless) for JS-rendered SPAs.
-- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 4 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`. `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
+- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 5 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`, `source_suggestions`. `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). `source_suggestions` stores weekly field-intelligence org suggestions (status: `pending` | `skipped`). Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
 - **Web framework:** Flask 3.x, dev server only, `host="127.0.0.1"` — localhost only, not network-accessible.
 - **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password. Each job card includes a 1–10 rating row; pills link to the CF Worker `/feedback` route with a score param.
 - **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
 - **Retry logic:** `tenacity` — all scrapers and LLM calls use `@retry` decorators.
 - **HTTP retry:** `stop_after_attempt(3)`, `wait_exponential(min=2, max=15)` — standard for scrapers. TNI uses `stop_after_attempt(2)` to limit wasted time.
-- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Rating row pills and legacy like/pass buttons are HMAC-signed (24-hour daily bucket; action="rate" for pills, action="like"/"pass" for buttons). KV payload: `{job_id, action, score, reason, ts}`. `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it.
+- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Rating row pills and legacy like/pass buttons are HMAC-signed (24-hour daily bucket; action="rate" for pills, action="like"/"pass" for buttons). Skip-suggestion links are also HMAC-signed (action="skip_suggestion"). KV key prefixes: `feedback:{job_id}` for ratings, `skip:{suggestion_id}` for dismissals. `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it.
 
 ### Required environment variables (`.env` in project root)
 
@@ -147,6 +147,7 @@ CF_WORKER_SECRET         # Optional. Shared HMAC secret (set via wrangler secret
 - Change how feedback affects scoring → `feedback/profile_updater.py:generate_prompt_additions()`
 - Change org boost logic (which orgs get boosted) → `feedback/profile_updater.py:update_liked_organizations()`
 - Change what Timo's profile says → `config/profile.yaml` (never overwrite — updated dynamically; `liked_organizations` key is auto-maintained by `update_liked_organizations()`)
+- Change the weekly field-intelligence recommender (org suggestions in digest) → `feedback/source_recommender.py`; threshold is `config/settings.yaml:source_recommender.min_jobs`
 
 Full file dependency diagram: [ARCHITECTURE.md — File Dependency Diagram](ARCHITECTURE.md#file-dependency-diagram).
 

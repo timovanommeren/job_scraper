@@ -1,11 +1,17 @@
 // Cloudflare Worker — job feedback routing for Timo's job scraper
 //
 // Routes:
-//   GET  /feedback?job_id=X&action=like|pass&sig=HMAC  — quick like/pass from email
-//   GET  /rate?job_id=X&sig=HMAC                        — serve mobile rating form
-//   POST /rate                                           — submit rating form
-//   GET  /poll                                           — pull pending entries (Authorization header)
-//   DELETE /poll                                         — clear pulled entries (Authorization header)
+//   GET  /feedback?job_id=X&action=like|pass&sig=HMAC         — quick like/pass from email
+//   GET  /feedback?job_id=X&score=N&sig=HMAC                  — rating row pill tap
+//   GET  /feedback?suggestion_id=N&action=skip_suggestion&sig  — skip a source suggestion
+//   GET  /rate?job_id=X&sig=HMAC                               — serve mobile rating form
+//   POST /rate                                                  — submit rating form
+//   GET  /poll                                                  — pull pending entries (Authorization header)
+//   DELETE /poll                                                — clear pulled entries (Authorization header)
+//
+// KV key prefixes:
+//   feedback:{job_id}     — job ratings (like/pass/rate)
+//   skip:{suggestion_id}  — source suggestion dismissals
 //
 // Environment bindings (set via wrangler secret / wrangler.toml):
 //   CF_WORKER_SECRET  — shared HMAC + poll auth secret
@@ -193,41 +199,71 @@ export default {
     const secret = env.CF_WORKER_SECRET;
     const kv = env.FEEDBACK_KV;
 
-    // GET /feedback — rating row tap from email (score=N) or legacy like/pass button
+    // GET /feedback — rating row tap, legacy like/pass, or source suggestion skip
     if (request.method === "GET" && path === "/feedback") {
       const jobId = params.get("job_id") || "";
       const sig = params.get("sig") || "";
       const scoreRaw = params.get("score");
+      const action = params.get("action") || "";
+      const suggestionId = params.get("suggestion_id") || "";
 
-      // Rating row: action is always "rate", score comes from the URL param
-      // Legacy buttons: action is "like" or "pass", no score param
-      let action = params.get("action") || "";
+      // ── Source suggestion skip ────────────────────────────────────────────────
+      if (action === "skip_suggestion" && suggestionId) {
+        if (!sig) return errorPage(400, "Missing parameters.");
+        if (!(await verifyActionSig(secret, suggestionId, "skip_suggestion", sig))) {
+          return errorPage(403, "Link expired or invalid. Use a fresh email.");
+        }
+        await kv.put(
+          `skip:${suggestionId}`,
+          JSON.stringify({ suggestion_id: parseInt(suggestionId, 10), action: "skip_suggestion", ts: new Date().toISOString() }),
+          { expirationTtl: KV_TTL }
+        );
+        return new Response(
+          `<!DOCTYPE html><html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skipped</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;
+display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc}
+.card{background:#fff;border-radius:12px;padding:32px 24px;text-align:center;max-width:320px;
+box-shadow:0 2px 12px rgba(0,0,0,.08)}.emoji{font-size:48px;margin-bottom:16px}
+h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style>
+</head><body><div class="card">
+<div class="emoji">🚫</div>
+<h2>Suggestion dismissed</h2>
+<p>You won't see this organisation suggested again.</p>
+</div></body></html>`,
+          { status: 200, headers: { "Content-Type": "text/html;charset=UTF-8" } }
+        );
+      }
+
+      // ── Job rating (rating row pill or legacy like/pass button) ───────────────
       let score = null;
+      let resolvedAction = action;
 
       if (scoreRaw !== null) {
         // Rating row path — action is "rate" (signed), score is unsigned param
         score = Math.max(1, Math.min(10, parseInt(scoreRaw, 10) || 5));
-        action = score >= 7 ? "like" : "pass";
+        resolvedAction = score >= 7 ? "like" : "pass";
         if (!jobId || !sig) return errorPage(400, "Missing parameters.");
         if (!(await verifyActionSig(secret, jobId, "rate", sig))) {
           return errorPage(403, "Link expired or invalid. Use a fresh email.");
         }
       } else {
         // Legacy like/pass button path
-        if (!jobId || !["like", "pass"].includes(action) || !sig) {
+        if (!jobId || !["like", "pass"].includes(resolvedAction) || !sig) {
           return errorPage(400, "Missing or invalid parameters.");
         }
-        if (!(await verifyActionSig(secret, jobId, action, sig))) {
+        if (!(await verifyActionSig(secret, jobId, resolvedAction, sig))) {
           return errorPage(403, "Link expired or invalid. Use a fresh email.");
         }
       }
 
       await kv.put(
         `feedback:${jobId}`,
-        JSON.stringify({ job_id: jobId, action, score, reason: "", ts: new Date().toISOString() }),
+        JSON.stringify({ job_id: jobId, action: resolvedAction, score, reason: "", ts: new Date().toISOString() }),
         { expirationTtl: KV_TTL }
       );
-      return thanksPage(action, score);
+      return thanksPage(resolvedAction, score);
     }
 
     // GET /rate — serve mobile rating form
@@ -277,16 +313,20 @@ export default {
       return thanksPage(action, score);
     }
 
-    // GET /poll — return all pending KV entries (requires Authorization header)
+    // GET /poll — return all pending KV entries (feedback: and skip: prefixes)
     if (request.method === "GET" && path === "/poll") {
       const auth = request.headers.get("Authorization") || "";
       if (auth !== `Bearer ${secret}`) {
         return new Response("Unauthorized", { status: 401 });
       }
 
-      const list = await kv.list({ prefix: "feedback:" });
+      const [fbList, skipList] = await Promise.all([
+        kv.list({ prefix: "feedback:" }),
+        kv.list({ prefix: "skip:" }),
+      ]);
+      const allKeys = [...fbList.keys, ...skipList.keys];
       const entries = [];
-      for (const key of list.keys) {
+      for (const key of allKeys) {
         const val = await kv.get(key.name, { type: "json" });
         if (val) entries.push(val);
       }
@@ -296,16 +336,20 @@ export default {
       });
     }
 
-    // DELETE /poll — remove all feedback entries after successful sync
+    // DELETE /poll — remove all feedback and skip entries after successful sync
     if (request.method === "DELETE" && path === "/poll") {
       const auth = request.headers.get("Authorization") || "";
       if (auth !== `Bearer ${secret}`) {
         return new Response("Unauthorized", { status: 401 });
       }
 
-      const list = await kv.list({ prefix: "feedback:" });
-      await Promise.all(list.keys.map(k => kv.delete(k.name)));
-      return new Response(JSON.stringify({ deleted: list.keys.length }), {
+      const [fbList, skipList] = await Promise.all([
+        kv.list({ prefix: "feedback:" }),
+        kv.list({ prefix: "skip:" }),
+      ]);
+      const allKeys = [...fbList.keys, ...skipList.keys];
+      await Promise.all(allKeys.map(k => kv.delete(k.name)));
+      return new Response(JSON.stringify({ deleted: allKeys.length }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });

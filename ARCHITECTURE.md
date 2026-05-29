@@ -95,16 +95,19 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── db/migrations.py  →  db/schema.sql  →  db/jobs.db
         ├── db/dedup.py       →  db/jobs.db
         └── notifier/gmail.py
-              └── feedback/profile_updater.py  (email footer)
+              ├── feedback/profile_updater.py  (email footer)
+              └── feedback/source_recommender.py  (weekly field-intelligence suggestions)
+                    ├── agents/extractor_scorer.py  (build_client)
+                    └── db/jobs.db  (high-rated jobs + source_suggestions table)
 
 feedback/server.py  (Task Scheduler → at logon, always-on)
-  ├── db/dedup.py       →  db/jobs.db        (job list, feedback table)
+  ├── db/dedup.py       →  db/jobs.db        (job list, feedback table, source_suggestions)
   ├── feedback/store.py →  feedback/feedback_store.json
   └── feedback/profile_updater.py            (email footer HTML)
 
 feedback/cf_sync.py  (Task Scheduler → every hour)
   ├── cloudflare/worker/index.js  [deployed to Cloudflare — GET /poll, DELETE /poll]
-  ├── db/dedup.py       →  db/jobs.db        (job metadata lookup + feedback write)
+  ├── db/dedup.py       →  db/jobs.db        (job metadata lookup + feedback write + skip write)
   └── feedback/store.py →  feedback/feedback_store.json
 ```
 
@@ -425,6 +428,19 @@ api_errors      INTEGER
 status          TEXT       -- success | partial | failed
 ```
 
+**`source_suggestions`** — org suggestions from the weekly field-intelligence recommender
+```
+id               INTEGER PK AUTOINCREMENT
+suggested_at     TEXT NOT NULL      -- ISO 8601 UTC timestamp
+org_name         TEXT NOT NULL      -- organisation display name
+org_country      TEXT               -- country of HQ
+org_description  TEXT               -- 1-sentence description
+careers_url      TEXT               -- validated careers page URL
+status           TEXT DEFAULT 'pending'  -- 'pending' | 'skipped'
+skipped_at       TEXT               -- set when user dismisses via email link
+```
+Note: there is no `'added'` status. Adding a scraper is a manual code edit; the table tracks only dismissals.
+
 ### Indexes
 ```sql
 idx_jobs_url_hash     ON jobs(url_hash)      -- O(1) dedup check
@@ -467,6 +483,7 @@ The `JobScraperFeedbackServer` Windows Task Scheduler task runs `pythonw.exe fee
 | `GET` | `/fb` | Email button compat: `?id=N` → redirect to `/jobs/N` |
 | `GET` | `/comment_form` | Legacy compat: redirects to `/jobs/<id>` |
 | `POST` | `/comment` | Legacy compat: writes JSON feedback, redirects |
+| `GET` | `/skip-suggestion` | Desktop fallback: `?id=N` → marks source suggestion as `skipped` in DB; returns 404 if ID not found. Mobile links use CF Worker instead. |
 | `GET` | `/health` | Returns `"OK", 200` — used to test if server is running |
 
 ### Tier filter implementation
@@ -538,7 +555,9 @@ If `_smtp_send()` raises, `save_fallback_html()` writes the full digest HTML to 
 
 ### How feedback is submitted
 
-**From email (1–10 rating row):** Each job card in the daily and weekly digest contains a rating row — two rows of 5 pills numbered 1–10. Each pill is a signed HMAC link that goes directly to the Cloudflare Worker `/feedback` route with `?score=N`. Tapping a pill records the score without loading a form. CF Worker derives action from score (≥7 → like, <7 → pass) and stores `{job_id, action, score, reason, ts}` in KV. `cf_sync.py` polls the Worker hourly and writes the result to both SQLite and `feedback_store.json`.
+**From email (1–10 rating row):** Each job card in the daily and weekly digest contains a rating row — two rows of 5 pills numbered 1–10. Each pill is a signed HMAC link that goes directly to the Cloudflare Worker `/feedback` route with `?score=N`. Tapping a pill records the score without loading a form. CF Worker derives action from score (≥7 → like, <7 → pass) and stores `{job_id, action, score, reason, ts}` in KV under the `feedback:{job_id}` key prefix. `cf_sync.py` polls the Worker hourly and writes the result to both SQLite and `feedback_store.json`.
+
+**From email (skip-suggestion link):** Each source suggestion card in the weekly digest contains a "Skip" link signed with HMAC (`action=skip_suggestion`). Tapping it stores `{suggestion_id, action, ts}` in KV under the `skip:{suggestion_id}` key prefix. `cf_sync.py` handles this action type separately: it writes `status='skipped'` to the `source_suggestions` table (no feedback store write). Desktop fallback: `/skip-suggestion?id=N` Flask route.
 
 **From Flask (full form):** User goes to `http://localhost:5001/jobs/<id>` → full feedback form.
 
@@ -583,6 +602,29 @@ So feedback given today affects tomorrow's run's scores. The more feedback you g
 
 **Org boost:** After each feedback submission (desktop or phone), `profile_updater.py:update_liked_organizations()` counts orgs that appear ≥2 times with score≥8 OR action='applied'. Qualifying orgs (up to 20) are written to `config/profile.yaml` under the `liked_organizations:` key. The next scoring run injects these into the system prompt: "These organisations are strong matches based on past feedback … boost by +1–2 points by default."
 
+### Field intelligence — closing the loop at the scraper layer
+
+**File:** `feedback/source_recommender.py`
+
+**Triggered by:** `notifier/gmail.py:send_weekly_digest()` — runs once per weekly digest, before the test_mode bail-out (so it prints in `--weekly-digest --test` mode too).
+
+**What it does:**
+1. Queries jobs with `effective_score >= 8` (user feedback score if present, else LLM score) from the last 90 days
+2. If fewer than `source_recommender.min_jobs` (default: 5 from `config/settings.yaml`) qualifying jobs exist, returns `None` silently — no section in email
+3. Calls Claude Haiku via `instructor` to generate a `SourceRecommendation`:
+   - `profile_summary`: 2–3 sentences describing patterns in top-rated jobs
+   - `suggestions`: up to 3 new organisations not already covered by existing scrapers
+4. Validates each suggestion URL in parallel (`ThreadPoolExecutor(max_workers=3)`) via a 3-step cascade: direct HTTP GET → root-domain fallback → DuckDuckGo HTML search
+5. Drops suggestions where all validation steps fail
+6. Saves validated suggestions to `source_suggestions` table (skipped in `--test` mode)
+7. Returns `SourceRecommendation` to `send_weekly_digest()` which renders a "Your Field This Week" section in the digest HTML
+
+**Timeout:** The entire recommender call (Claude + URL validation) is wrapped in `ThreadPoolExecutor(max_workers=1) + future.result(timeout=90)` in `gmail.py`. If it exceeds 90 seconds, a WARNING is logged and the weekly digest is sent without the suggestions section.
+
+**Skipping suggestions:** Each suggestion card in the email contains a skip link — HMAC-signed, routed through the Cloudflare Worker (`action=skip_suggestion`). `cf_sync.py` handles the resulting KV entry and sets `status='skipped'` in `source_suggestions`. Skipped orgs are excluded from future Claude suggestion output. The desktop fallback is the Flask `/skip-suggestion?id=N` route.
+
+**SOURCE_NAME_TO_DISPLAY dict:** Maps scraper `source_name` slugs to display names used in the Claude prompt so it knows which orgs are already covered. A WARNING (not assertion) is logged if the live registry has slugs not in the dict — add them to keep the coverage list accurate.
+
 ---
 
 ## Directory Tree & File Roles
@@ -620,10 +662,14 @@ job_scraper/
 ├── feedback/
 │   ├── __init__.py
 │   ├── .server.pid               # PID file written by server.py at startup (runtime artifact)
+│   ├── cf_sync.py                # Hourly poll: Cloudflare KV → SQLite + feedback_store.json
 │   ├── feedback_store.json       # Flat JSON log of like/pass actions (for prompt calibration)
 │   ├── profile_updater.py        # generate_prompt_additions() + build_feedback_footer_html()
 │   │                             #   + update_liked_organizations() (writes liked_organizations to profile.yaml)
 │   ├── server.py                 # Flask app (port 5001): job browser + feedback form
+│   ├── source_recommender.py     # Weekly field-intelligence: high-rated jobs → org suggestions
+│   │                             #   generate_suggestions(db, client, test_mode) → SourceRecommendation
+│   │                             #   SOURCE_NAME_TO_DISPLAY maps scraper slugs → display names
 │   └── store.py                  # Read/write helpers for feedback_store.json
 │
 ├── logs/                         # All log files (gitignored)
@@ -681,6 +727,11 @@ filtering:
 email:
   send_if_no_new_jobs: true      # Currently unused — the actual gate is should_send_daily() in gmail.py
   max_jobs_in_email: 50          # Currently unused — no hard cap in send_digest()
+
+source_recommender:
+  min_jobs: 5                    # Minimum high-rated jobs (score >= 8, last 90 days) required to trigger
+                                 # the weekly field-intelligence section. If fewer are found, the section
+                                 # is omitted silently. Read by feedback/source_recommender.py.
 
 logging:
   level: INFO                    # Root logger level (DEBUG | INFO | WARNING | ERROR)

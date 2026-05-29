@@ -29,6 +29,7 @@ def init_db() -> None:
         _safe_add_column(conn, "jobs", "deadline", "TEXT")
         _safe_add_column(conn, "feedback", "tags", "TEXT")  # JSON list of tag strings
         logger.info(f"Database initialised at {DB_PATH}")
+        logger.info("Schema: source_suggestions table ensured")
     except Exception:
         logger.exception("Database initialisation failed")
         raise

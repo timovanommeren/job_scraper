@@ -142,8 +142,32 @@ def sync_pending_feedback() -> int:
     synced = 0
 
     for entry in entries:
-        job_id = str(entry.get("job_id", "")).strip()
         action = entry.get("action", "pass")
+
+        # ── Source suggestion skip ─────────────────────────────────────────────
+        if action == "skip_suggestion":
+            suggestion_id = entry.get("suggestion_id")
+            ts = entry.get("ts", "")
+            if not suggestion_id:
+                logger.warning("[cf_sync] skip_suggestion entry with no suggestion_id — skipping")
+                continue
+            try:
+                from db.dedup import get_connection
+                conn = get_connection()
+                conn.execute(
+                    "UPDATE source_suggestions SET status='skipped', skipped_at=? WHERE id=?",
+                    (ts, suggestion_id),
+                )
+                conn.commit()
+                conn.close()
+                logger.info(f"[cf_sync] Skipped suggestion_id={suggestion_id}")
+                synced += 1
+            except Exception:
+                logger.exception(f"[cf_sync] Failed to write skip for suggestion_id={suggestion_id}")
+            continue
+
+        # ── Job rating ─────────────────────────────────────────────────────────
+        job_id = str(entry.get("job_id", "")).strip()
         score_raw = entry.get("score")  # None for quick like/pass, int for /rate form
         reason = entry.get("reason", "")
         tags = entry.get("tags") or []  # list of tag strings from /rate form, empty for quick taps

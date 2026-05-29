@@ -22,6 +22,9 @@ email:
   send_if_no_new_jobs: true
   max_jobs_in_email: 50
 
+source_recommender:
+  min_jobs: 5   # minimum high-rated jobs (score >= 8) needed to trigger suggestions
+
 logging:
   level: INFO
   max_bytes: 5242880

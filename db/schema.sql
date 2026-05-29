@@ -64,3 +64,18 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_job_id   ON feedback(job_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_ts       ON feedback(timestamp);
+
+-- ── Source suggestion tracking ────────────────────────────────────────────────
+-- Stores organisations suggested by the weekly field-intelligence recommender.
+-- status: 'pending' (not yet actioned) | 'skipped' (user dismissed via email link)
+-- Adding a scraper is a manual code edit; there is no 'added' status.
+CREATE TABLE IF NOT EXISTS source_suggestions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    suggested_at     TEXT    NOT NULL,
+    org_name         TEXT    NOT NULL,
+    org_country      TEXT,
+    org_description  TEXT,
+    careers_url      TEXT,
+    status           TEXT    DEFAULT 'pending',
+    skipped_at       TEXT
+);

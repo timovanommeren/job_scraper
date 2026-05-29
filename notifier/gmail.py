@@ -7,6 +7,7 @@ import json
 import sqlite3
 import time
 import yaml
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -44,6 +45,19 @@ def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> 
         # Old "Rate" button: open slider form at /rate
         return f"{cf_url}/rate?job_id={job_id}&sig={sig}"
     return f"{cf_url}/feedback?job_id={job_id}&action={action}&sig={sig}"
+
+
+def _skip_suggestion_url(suggestion_id: int) -> str:
+    """Return a signed CF Worker URL for skipping a source suggestion (mobile-compatible).
+    Falls back to localhost Flask route when CF is not configured."""
+    cf_url = os.getenv("CF_WORKER_URL", "").rstrip("/")
+    secret = os.getenv("CF_WORKER_SECRET", "")
+    if not cf_url or not secret:
+        return f"http://localhost:5001/skip-suggestion?id={suggestion_id}"
+    day_bucket = int(time.time()) // 86400
+    payload = f"{suggestion_id}:skip_suggestion:{day_bucket}"
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{cf_url}/feedback?suggestion_id={suggestion_id}&action=skip_suggestion&sig={sig}"
 
 
 def _load_thresholds() -> tuple[int, int]:
@@ -315,6 +329,68 @@ def save_fallback_html(strong_rows: list, also_rows: list, stats: RunStats) -> P
 
 # ── Weekly digest ──────────────────────────────────────────────────────────────
 
+def _field_intelligence_html(recommendation, conn) -> str:
+    """Build the 'Your Field This Week' HTML block for the weekly digest.
+    Returns empty string when there is nothing useful to show."""
+    if recommendation is None:
+        return ""
+    profile = recommendation.profile_summary or ""
+    suggestions = recommendation.suggestions
+
+    if not suggestions:
+        if not profile or "unavailable" in profile.lower():
+            return ""
+        return (
+            '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;'
+            'padding:16px;margin-top:24px">'
+            '<h2 style="color:#0369a1;margin-top:0;font-size:16px">🌐 Your Field This Week</h2>'
+            f'<p style="color:#0c4a6e;font-size:13px;margin:0">{profile}</p>'
+            '</div>'
+        )
+
+    parts = []
+    for s in suggestions:
+        row = conn.execute(
+            "SELECT id FROM source_suggestions WHERE org_name = ? AND status = 'pending' "
+            "ORDER BY suggested_at DESC LIMIT 1",
+            (s.name,),
+        ).fetchone()
+        sid = row["id"] if row else None
+        careers_url = s.validated_url or s.candidate_url
+        skip_html = ""
+        if sid:
+            skip_url = _skip_suggestion_url(sid)
+            skip_html = (
+                f'<a href="{skip_url}" style="font-size:11px;color:#9ca3af;'
+                'text-decoration:none">Skip (don\'t suggest again) →</a>'
+            )
+        parts.append(
+            '<div style="border:1px solid #e2e8f0;border-radius:6px;padding:12px;'
+            'margin-bottom:8px;background:#fff">'
+            f'<div style="font-weight:bold;font-size:14px;color:#1a1a2e">'
+            f'{s.name} <span style="font-size:11px;color:#64748b;font-weight:normal">({s.country})</span></div>'
+            f'<div style="color:#374151;font-size:13px;margin:4px 0">{s.description}</div>'
+            '<div style="margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">'
+            f'<a href="{careers_url}" style="font-size:13px;color:#2563eb;text-decoration:none">→ View careers page</a>'
+            f'{skip_html}'
+            '</div>'
+            '</div>'
+        )
+
+    return (
+        '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;'
+        'padding:16px;margin-top:24px;margin-bottom:8px">'
+        '<h2 style="color:#0369a1;margin-top:0;font-size:16px">🌐 Your Field This Week</h2>'
+        f'<p style="color:#0c4a6e;font-size:13px;margin-bottom:14px">{profile}</p>'
+        '<div style="font-weight:600;font-size:13px;color:#0369a1;margin-bottom:8px">'
+        'Organisations worth adding as sources:</div>'
+        + "".join(parts)
+        + '<p style="color:#94a3b8;font-size:11px;margin:10px 0 0">'
+        'Suggested by AI based on your highest-rated jobs. Adding them requires a manual code edit.</p>'
+        '</div>'
+    )
+
+
 def send_weekly_digest(conn, test_mode: bool = False) -> int:
     """
     Query all jobs added in the last 7 days, send weekly digest email.
@@ -342,6 +418,16 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
     relevant = [r for r in rows if 5 <= (r["relevance_score"] or 0) <= 7]
     low      = [r for r in rows if (r["relevance_score"] or 0) <= 4]
 
+    # Run field-intelligence recommender before test_mode bail-out so it prints in test mode too.
+    recommendation = None
+    try:
+        from feedback.source_recommender import generate_suggestions
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(generate_suggestions, conn, None, test_mode)
+            recommendation = future.result(timeout=90)
+    except Exception:
+        logger.warning("Weekly digest: source recommender timed out or failed — continuing without suggestions")
+
     # Check for urgent deadlines in subject
     urgent = [
         r for r in rows
@@ -362,6 +448,14 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
             print(f"  [{r['relevance_score']}/10] {r['title']}")
         print(f"Relevant (5-7): {len(relevant)}")
         print(f"Low (1-4): {len(low)}")
+        if recommendation:
+            print(f"\nField Profile: {recommendation.profile_summary}")
+            if recommendation.suggestions:
+                print(f"Suggestions ({len(recommendation.suggestions)}):")
+                for s in recommendation.suggestions:
+                    print(f"  → {s.name} ({s.country}): {s.validated_url or s.candidate_url}")
+            else:
+                print("Suggestions: none (not enough qualifying jobs or all URLs failed validation)")
         print(f"--- END PREVIEW ---\n")
         return len(rows)
 
@@ -374,6 +468,7 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
     strong_sec   = _section("🎯 Strong Matches — 8–10", strong)
     relevant_sec = _section("💡 Relevant — 5–7",        relevant)
     low_sec      = _section("📋 Also Scraped — 1–4",    low) if low else ""
+    field_intel  = _field_intelligence_html(recommendation, conn)
 
     feedback_footer = _feedback_footer_html()
 
@@ -389,6 +484,7 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
 {strong_sec}
 {relevant_sec}
 {low_sec}
+{field_intel}
 <hr style="margin:24px 0">
 <p style="color:#888;font-size:12px">
   View all jobs and give feedback at
