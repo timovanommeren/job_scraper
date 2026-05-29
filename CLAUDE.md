@@ -110,9 +110,10 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 4 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`. Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
 - **Web framework:** Flask 3.x, dev server only, `host="127.0.0.1"` — localhost only, not network-accessible.
 - **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password.
-- **Scheduling:** Windows Task Scheduler — 3 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
+- **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
 - **Retry logic:** `tenacity` — all scrapers and LLM calls use `@retry` decorators.
 - **HTTP retry:** `stop_after_attempt(3)`, `wait_exponential(min=2, max=15)` — standard for scrapers. TNI uses `stop_after_attempt(2)` to limit wasted time.
+- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Email feedback buttons are HMAC-signed (24-hour daily bucket). `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it.
 
 ### Required environment variables (`.env` in project root)
 
@@ -123,6 +124,8 @@ GMAIL_ADDRESS            # Required. Gmail account used to send.
 GMAIL_APP_PASSWORD       # Required. App Password (Settings → Security → 2FA → App passwords).
 NOTIFY_RECIPIENT         # Optional. Defaults to GMAIL_ADDRESS.
 RAW_TEXT_MAX_CHARS       # Optional. Default: 4000. Max chars of raw job text sent to Claude.
+CF_WORKER_URL            # Optional. Deployed Cloudflare Worker URL for phone feedback.
+CF_WORKER_SECRET         # Optional. Shared HMAC secret (set via wrangler secret put CF_WORKER_SECRET).
 ```
 
 ---

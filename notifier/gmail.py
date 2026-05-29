@@ -1,8 +1,11 @@
+import hmac
+import hashlib
 import smtplib
 import os
 import logging
 import json
 import sqlite3
+import time
 import yaml
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -14,6 +17,29 @@ from urllib.parse import quote as urlquote
 logger = logging.getLogger(__name__)
 
 FEEDBACK_BASE = "http://localhost:5001"
+
+
+def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> str:
+    """
+    Return a signed Cloudflare Worker URL for the given like/pass/rate action.
+    Falls back to the localhost Flask URL when CF_WORKER_URL is not configured.
+
+    action values: "like", "pass", "rate"
+    HMAC uses a 24-hour daily bucket so links are valid for the whole calendar day.
+    """
+    cf_url = os.getenv("CF_WORKER_URL", "").rstrip("/")
+    secret = os.getenv("CF_WORKER_SECRET", "")
+    if not cf_url or not secret:
+        # Fallback: existing localhost /fb route (desktop only)
+        return f"{FEEDBACK_BASE}/fb?id={job_id}&a={action}"
+
+    day_bucket = int(time.time()) // 86400
+    payload = f"{job_id}:{action}:{day_bucket}"
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+
+    if action == "rate":
+        return f"{cf_url}/rate?job_id={job_id}&sig={sig}"
+    return f"{cf_url}/feedback?job_id={job_id}&action={action}&sig={sig}"
 
 
 def _load_thresholds() -> tuple[int, int]:
@@ -132,14 +158,15 @@ def job_html(job: sqlite3.Row) -> str:
 
     dl_badge = _deadline_badge_email(job["deadline"])
 
-    # Feedback buttons (link to job detail page)
+    # Feedback buttons — use signed CF Worker URLs when configured, localhost otherwise
     jid    = str(job["id"])
     jurl   = urlquote(job["url"] or "", safe="")
     jtitle = urlquote(job["title"] or "", safe="")
     jorg   = urlquote(job["organization"] or "", safe="")
 
-    fb_like = f"{FEEDBACK_BASE}/fb?id={jid}&url={jurl}&t={jtitle}&o={jorg}&s={score}&a=like"
-    fb_pass = f"{FEEDBACK_BASE}/fb?id={jid}&url={jurl}&t={jtitle}&o={jorg}&s={score}&a=pass"
+    fb_like = _feedback_action_url(jid, "like", score)
+    fb_pass = _feedback_action_url(jid, "pass", score)
+    fb_rate = _feedback_action_url(jid, "rate", score)
 
     deadline_line = ""
     if job["deadline"]:
@@ -177,7 +204,7 @@ def job_html(job: sqlite3.Row) -> str:
        style="background:#fef2f2;color:#dc2626;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;border:1px solid #fecaca">
       ❌ Pass
     </a>
-    <a href="{FEEDBACK_BASE}/jobs/{jid}"
+    <a href="{fb_rate}"
        style="color:#94a3b8;padding:5px 11px;border-radius:4px;text-decoration:none;font-size:12px;border:1px solid #e2e8f0">
       💬 Rate
     </a>

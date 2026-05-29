@@ -315,6 +315,15 @@ def main(
         logger.info(
             f"Starting run (test_mode={test_mode}, dry_run={dry_run}, site={site or 'all'})"
         )
+
+        # Sync any phone feedback from Cloudflare KV before scoring.
+        # Wrapped in try/except so a CF outage never aborts the daily scrape.
+        try:
+            from feedback.cf_sync import sync_pending_feedback
+            sync_pending_feedback()
+        except Exception:
+            logger.warning("[cf_sync] Startup sync failed — continuing without it")
+
         raw_jobs = run_scrapers(settings, site_filter=site)
         sites_scraped = len(set(j.source for j in raw_jobs))
         logger.info(f"Total raw jobs fetched: {len(raw_jobs)} from {sites_scraped} sources")

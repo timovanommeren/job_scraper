@@ -101,6 +101,11 @@ feedback/server.py  (Task Scheduler → at logon, always-on)
   ├── db/dedup.py       →  db/jobs.db        (job list, feedback table)
   ├── feedback/store.py →  feedback/feedback_store.json
   └── feedback/profile_updater.py            (email footer HTML)
+
+feedback/cf_sync.py  (Task Scheduler → every hour)
+  ├── cloudflare/worker/index.js  [deployed to Cloudflare — GET /poll, DELETE /poll]
+  ├── db/dedup.py       →  db/jobs.db        (job metadata lookup + feedback write)
+  └── feedback/store.py →  feedback/feedback_store.json
 ```
 
 
@@ -213,13 +218,14 @@ All flags are defined in `main.py`'s `argparse` block. Call `python main.py --he
 
 ## Windows Task Scheduler
 
-Three tasks are registered. All are under the current user account. If the machine is asleep when a task fires, the task runs at next wakeup (Windows default: "Run as soon as possible after a scheduled start is missed").
+Four tasks are registered. All are under the current user account. If the machine is asleep when a task fires, the task runs at next wakeup (Windows default: "Run as soon as possible after a scheduled start is missed").
 
 | Task Name | Command | Schedule | Notes |
 |---|---|---|---|
 | `JobScraperFeedbackServer` | `pythonw.exe feedback\server.py` | At every user logon | RestartCount=5, interval=2 min. No window. Logs to `logs\server.log`. |
 | `JobScraperDaily` | `run.bat` | Daily at 07:00 | `run.bat` checks port 5001 first, starts server if needed, then `python main.py`. Logs to `logs\task_scheduler_output.log`. |
 | `JobScraperWeeklyDigest` | `python.exe main.py --weekly-digest` | Every Tuesday at 08:00 | Runs independently of daily scrape. Queries last 7 days from DB. |
+| `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Every hour | Pulls phone feedback from Cloudflare KV into local DB + feedback_store.json. Only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`. |
 
 **`run.bat` logic:**
 ```batch
