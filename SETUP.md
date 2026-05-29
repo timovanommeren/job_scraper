@@ -6,7 +6,7 @@ Four scheduled tasks keep the pipeline running automatically.
 
 ### Task 1 — Feedback Server (runs at every user logon, stays alive)
 
-The feedback server must be running for email links (Interested / Pass / Rate) to work.
+The feedback server must be running for localhost feedback links to work.
 It is registered as a persistent logon task — starts automatically when you log in,
 restarts automatically if it crashes.
 
@@ -130,7 +130,7 @@ Logs: logs/server.log
 
 ## Phone feedback (optional — Cloudflare Worker)
 
-By default, email feedback buttons link to `localhost:5001` — desktop only. To make them work on your phone, deploy the Cloudflare Worker:
+By default, the 1–10 rating row in every email digest links to `localhost:5001` — desktop only. To make it work on your phone (tapping a number records the score remotely), deploy the Cloudflare Worker:
 
 1. Install [Wrangler](https://developers.cloudflare.com/workers/wrangler/install-update/): `npm install -g wrangler`
 2. Authenticate: `wrangler login`
@@ -145,4 +145,4 @@ By default, email feedback buttons link to `localhost:5001` — desktop only. To
    ```
 8. Register the hourly sync task (Task 4 above).
 
-Once configured, email feedback buttons generate signed 24-hour links that route through the Worker. Phone feedback syncs to the local DB within the hour.
+Once configured, each rating pill in the email generates a signed 24-hour link that routes through the Worker and records your score. Phone ratings sync to the local DB within the hour.

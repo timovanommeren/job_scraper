@@ -79,9 +79,11 @@ python main.py --reprocess 10       # Re-score last 10 failed extractions from D
 
 ## Feedback & Local UI
 
-The Flask app at **http://localhost:5001** lets you browse all scraped jobs, filter by relevance tier, and rate them. It starts automatically at login — no manual start needed.
+The Flask app at **http://localhost:5001** lets you browse all scraped jobs, filter by relevance tier, and rate them. Each job's detail page has a 1–10 slider, structured tag pills (e.g. "Wrong field", "Great org"), a freetext box, and an "✅ Applied" button once initial feedback is submitted. It starts automatically at login — no manual start needed.
 
-Email feedback buttons (Interested / Pass / Rate) work on desktop via the local Flask app. When `CF_WORKER_URL` and `CF_WORKER_SECRET` are configured, the buttons use signed Cloudflare Worker links instead — these work on any device including your phone. Phone feedback syncs to the local DB hourly via `feedback/cf_sync.py`. Your ratings feed back into the scoring system prompt, so Claude adjusts future scores based on what you liked or passed on.
+Every email digest includes a **1–10 rating row** per job (two rows of 5 number pills). Tapping a number records your score immediately — no form to open. When `CF_WORKER_URL` and `CF_WORKER_SECRET` are configured, the rating row uses HMAC-signed Cloudflare Worker links that work on any device including your phone. Phone ratings sync to the local DB hourly via `feedback/cf_sync.py`.
+
+Your ratings feed back into the scoring system prompt in two ways: past liked/passed jobs appear as few-shot calibration examples (with tags for richer context), and organisations you've rated ≥ 8 twice or marked as applied get a persistent +1–2 point boost written to `config/profile.yaml`.
 
 ---
 
