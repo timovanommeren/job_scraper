@@ -1,0 +1,7 @@
+name = "job-feedback"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "FEEDBACK_KV"
+id = "eb681e61163c429586bb91f7a3322c7e"

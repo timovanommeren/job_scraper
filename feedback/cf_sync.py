@@ -74,11 +74,18 @@ def _lookup_job(job_id: str) -> dict | None:
         conn.close()
 
 
+_HEADERS = {
+    "Authorization": "",  # filled per-call
+    "User-Agent": "job-scraper-sync/1.0",
+    "Accept": "application/json",
+}
+
+
 def _poll(worker_url: str, secret: str) -> list:
     """GET /poll → list of pending feedback entries."""
     req = Request(
         f"{worker_url}/poll",
-        headers={"Authorization": f"Bearer {secret}"},
+        headers={**_HEADERS, "Authorization": f"Bearer {secret}"},
     )
     try:
         with urlopen(req, timeout=15) as resp:
@@ -97,7 +104,7 @@ def _clear(worker_url: str, secret: str) -> int:
     req = Request(
         f"{worker_url}/poll",
         method="DELETE",
-        headers={"Authorization": f"Bearer {secret}"},
+        headers={**_HEADERS, "Authorization": f"Bearer {secret}"},
     )
     try:
         with urlopen(req, timeout=15) as resp:
