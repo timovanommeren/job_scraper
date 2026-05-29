@@ -98,3 +98,57 @@ class TestFeedbackActionUrl:
         sig1 = parse_qs(urlparse(url1).query)["sig"][0]
         sig2 = parse_qs(urlparse(url2).query)["sig"][0]
         assert sig1 != sig2
+
+    # ── Rating row pill tests ──────────────────────────────────────────────────
+
+    def test_rating_pill_uses_feedback_route_not_rate(self):
+        """Rating row pill (action='rate', score=7) goes to /feedback, not /rate."""
+        env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": "s3cr3t"}
+        with patch.dict(os.environ, env, clear=False):
+            import importlib; import notifier.gmail as gm; importlib.reload(gm)
+            url = gm._feedback_action_url("42", "rate", score=7)
+        assert "/feedback" in url
+        assert "/rate" not in url
+
+    def test_rating_pill_includes_score_param(self):
+        """Rating row pill URL contains score=N param with the correct value."""
+        env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": "s3cr3t"}
+        with patch.dict(os.environ, env, clear=False):
+            import importlib; import notifier.gmail as gm; importlib.reload(gm)
+            url = gm._feedback_action_url("42", "rate", score=3)
+        from urllib.parse import urlparse, parse_qs
+        params = parse_qs(urlparse(url).query)
+        assert params["score"] == ["3"]
+
+    def test_rating_pill_hmac_uses_rate_action(self):
+        """Rating row pill sig is HMAC of '{job_id}:rate:{day_bucket}' regardless of score."""
+        secret = "hmac_key"
+        env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": secret}
+        with patch.dict(os.environ, env, clear=False):
+            import importlib; import notifier.gmail as gm; importlib.reload(gm)
+            url = gm._feedback_action_url("99", "rate", score=10)
+
+        from urllib.parse import urlparse, parse_qs
+        sig_in_url = parse_qs(urlparse(url).query)["sig"][0]
+        expected_sig = _sign(secret, "99", "rate")
+        assert sig_in_url == expected_sig
+
+    def test_rate_button_without_score_still_uses_rate_route(self):
+        """action='rate' with no score (old Rate button) still goes to /rate form."""
+        env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": "s3cr3t"}
+        with patch.dict(os.environ, env, clear=False):
+            import importlib; import notifier.gmail as gm; importlib.reload(gm)
+            url = gm._feedback_action_url("10", "rate")
+        assert "/rate" in url
+        assert "score=" not in url
+
+    def test_all_ten_pills_produce_correct_score_params(self):
+        """Each of the 10 rating pills encodes the correct score in the URL."""
+        env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": "key"}
+        from urllib.parse import urlparse, parse_qs
+        with patch.dict(os.environ, env, clear=False):
+            import importlib; import notifier.gmail as gm; importlib.reload(gm)
+            for n in range(1, 11):
+                url = gm._feedback_action_url("1", "rate", score=n)
+                params = parse_qs(urlparse(url).query)
+                assert params["score"] == [str(n)], f"score mismatch for pill {n}"
