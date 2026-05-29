@@ -1,0 +1,22 @@
+scraper:
+  request_delay_seconds: 2
+  playwright_timeout_ms: 30000
+  max_jobs_per_site: 100
+  raw_text_max_chars: 4000
+
+filtering:
+  # Aligned with extractor_scorer.py tier boundaries and gmail.py STRONG_THRESHOLD.
+  # strong_match: score >= 8  (emailed immediately)
+  # maybe:        score 5–7   (emailed in "also found" section if score >= 6)
+  # not_relevant: score <= 4  (DB only, never emailed)
+  strong_match_threshold: 8
+  maybe_threshold: 5
+
+email:
+  send_if_no_new_jobs: true
+  max_jobs_in_email: 50
+
+logging:
+  level: INFO
+  max_bytes: 5242880
+  backup_count: 3
