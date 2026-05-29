@@ -189,12 +189,16 @@ def job_html(job: sqlite3.Row) -> str:
 
     row1 = "".join(_pill(n) for n in range(1, 6))
     row2 = "".join(_pill(n) for n in range(6, 11))
+    full_feedback_url = _feedback_action_url(jid, "rate")
     rating_row = (
         '<div style="margin-top:10px">'
         '<div style="font-size:11px;color:#9ca3af;margin-bottom:4px">'
         'How relevant? &nbsp;(1 = not relevant · 10 = perfect fit)</div>'
         f'<div>{row1}</div>'
         f'<div>{row2}</div>'
+        f'<div style="margin-top:6px;font-size:11px">'
+        f'<a href="{full_feedback_url}" style="color:#9ca3af;text-decoration:none">'
+        'Full feedback (tags + note) &#8594;</a></div>'
         '</div>'
     )
 
