@@ -367,18 +367,67 @@ schtasks /end   /tn "JobScraperFeedbackServer"
 
 ## TODOS.md ↔ GitHub Issues (bidirectional)
 
-`TODOS.md` and GitHub Issues are kept in sync — they are two views of the same backlog.
+`TODOS.md` and GitHub Issues are kept in sync — they are two views of the same backlog. Timo may create issues remotely (e.g. from his phone); these should be reflected in `TODOS.md` on the next session.
 
-**TODOS.md → GitHub Issues:** At the end of any session that adds entries to `TODOS.md`, create matching GitHub issues via `gh issue create`. Use the TODOS.md entry as the issue body. Requires a token with `public_repo` scope stored via `gh auth login --with-token`.
+**TODOS.md → GitHub Issues:** At the end of any session that adds entries to `TODOS.md`, create matching GitHub issues via `gh issue create`. Use the TODOS.md entry as the issue body — issues must be self-contained, not just a title. Requires a token with `public_repo` scope stored via `gh auth login --with-token`.
 
-**GitHub Issues → TODOS.md:** At the start of any session where the user mentions a GitHub issue, or when asked to sync, pull open issues with `gh issue list` and add any that are missing from `TODOS.md`. Timo may create issues remotely (e.g. from his phone) — these should be reflected in `TODOS.md` on the next session.
+**GitHub Issues → TODOS.md:** At the start of any session where the user mentions a GitHub issue, or when asked to sync, run `gh issue list --state open` and add any issues missing from `TODOS.md` (expand them with full context, not just the title).
 
 **Format convention:**
-- Each TODOS.md entry should reference its GitHub issue number (e.g. `[#12](https://github.com/timovanommeren/job_scraper/issues/12)`)
-- Each GitHub issue should be self-contained (copy the full context from TODOS.md, not just a title)
-- When an item is completed, close the GitHub issue and remove or strike the TODOS.md entry
+- Each TODOS.md entry must reference its GitHub issue number (e.g. `[#12](https://github.com/timovanommeren/job_scraper/issues/12)`)
+- When an item is completed, close the GitHub issue (`gh issue close <N>`) and remove the TODOS.md entry
 
-**When to sync:** At session start if the user mentions "issues" or "todos", or explicitly asks to sync. Not required on every session — only when there's reason to believe they've diverged.
+**When to sync:** At session start if the user mentions "issues" or "todos", and always as part of `/document-release` (see below).
+
+### Issue labels — required on every issue
+
+Every GitHub issue must have **all three** of these label groups applied before it is considered complete:
+
+**Priority** (pick one):
+- `p1` — Must-do; blocked on conditions being met
+- `p2` — Deferred; pick up when capacity allows
+
+**Role** (pick all that apply — at least one required):
+- `role:ceo` — Strategic or product decision; needs Timo's input on direction
+- `role:designer` — Requires UX or visual design work
+- `role:engineer` — Pure engineering implementation
+
+**Topic** (pick all that apply — at least one required):
+- `bug` — Something broken
+- `enhancement` — New feature or improvement
+- `architecture` — System design, data flow, or structural concerns
+- `ux` — User experience or interface
+- `scraper` — Data-collection scraper
+- `pre-filter` — Layer 2 pre-screen / filtering pipeline
+- `feedback` — Feedback capture, sync, or UI
+- `scoring` — Claude scoring, calibration, or prompt tuning
+- `tech-debt` — Code correctness or maintainability debt
+- `documentation` — Docs only
+- `needs-investigation` — Needs research before a fix can be written
+
+### `/document-release` issue audit
+
+As part of every `/document-release` run, check for unlabeled or under-documented issues:
+
+```bash
+gh issue list --state open --json number,title,labels,body \
+  | python -c "
+import sys, json
+issues = json.load(sys.stdin)
+label_names = lambda i: [l['name'] for l in i['labels']]
+for i in issues:
+    labels = label_names(i)
+    missing = []
+    if not any(l in labels for l in ['p1','p2']): missing.append('priority')
+    if not any(l.startswith('role:') for l in labels): missing.append('role')
+    if not any(l in labels for l in ['bug','enhancement','architecture','ux','scraper',
+       'pre-filter','feedback','scoring','tech-debt','documentation','needs-investigation']):
+        missing.append('topic')
+    if missing or len(i.get('body','') or '') < 100:
+        print(f'#{i[\"number\"]} {i[\"title\"]} — missing: {missing or \"body too short\"}')"
+```
+
+For each flagged issue: add missing labels, and if the body is too short (< 100 chars), expand it with context from TODOS.md or the session that created it.
 
 ---
 
