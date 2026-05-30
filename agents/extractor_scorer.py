@@ -132,7 +132,7 @@ def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job"
     try:
         result = client.chat.completions.create(
             model=model,
-            max_tokens=80,
+            max_tokens=250,  # instructor uses tool_use JSON wrapper (~70 tokens overhead)
             messages=[{"role": "user", "content": user_content}],
             system=PRESCREEN_SYSTEM_PROMPT,
             response_model=_PreScreenResult,
