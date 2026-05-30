@@ -22,11 +22,24 @@ def fingerprint(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
-def is_seen(url: str, conn: sqlite3.Connection) -> bool:
-    """Returns True if this URL has already been processed."""
+def is_seen(url: str, conn: sqlite3.Connection) -> str:
+    """
+    Returns 'scored' if URL is in jobs, 'filtered' if in non-expired filtered_jobs,
+    or 'new' if unseen.
+
+    WARNING: all three values are truthy strings. Call sites must use explicit
+    string comparison — never `if is_seen():`.
+    """
     h = fingerprint(url)
-    row = conn.execute("SELECT 1 FROM jobs WHERE url_hash = ?", (h,)).fetchone()
-    return row is not None
+    if conn.execute("SELECT 1 FROM jobs WHERE url_hash = ?", (h,)).fetchone():
+        return "scored"
+    row = conn.execute(
+        "SELECT 1 FROM filtered_jobs WHERE url_hash = ? AND expires_at > strftime('%Y-%m-%d %H:%M:%S', 'now')",
+        (h,),
+    ).fetchone()
+    if row:
+        return "filtered"
+    return "new"
 
 
 def update_last_seen(url: str, conn: sqlite3.Connection) -> None:
@@ -62,6 +75,48 @@ def insert_job(raw, posting, conn: sqlite3.Connection) -> int:
     )
     conn.commit()
     return cur.lastrowid
+
+
+def insert_filtered(
+    raw,
+    filter_stage: str,
+    filter_reason: str,
+    conn: sqlite3.Connection,
+    similarity: float | None = None,
+) -> None:
+    """
+    Record a job rejected before LLM scoring.
+    Uses INSERT OR IGNORE to handle cross-listed URLs from multiple scrapers.
+    expires_at stored in SQLite's native space-separated format (see A3 note in schema.sql).
+    """
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    expires = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    h = fingerprint(raw.url)
+    max_chars = int(__import__("os").environ.get("RAW_TEXT_MAX_CHARS", 4000))
+    conn.execute(
+        """INSERT OR IGNORE INTO filtered_jobs
+           (url, url_hash, source, title, organization, raw_text,
+            filter_stage, filter_reason, similarity, filtered_at, expires_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            raw.url, h, raw.source,
+            getattr(raw, "title", None),
+            getattr(raw, "organization", None),
+            (raw.raw_text or "")[:max_chars],
+            filter_stage, filter_reason, similarity, now, expires,
+        ),
+    )
+    conn.commit()
+
+
+def log_view(job_id: int, conn: sqlite3.Connection) -> None:
+    """Record a Flask job-detail page view (implicit positive signal for ranker)."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO job_views (job_id, viewed_at) VALUES (?, ?)",
+        (job_id, now),
+    )
+    conn.commit()
 
 
 def insert_failed(raw, error_msg: str, conn: sqlite3.Connection) -> None:
@@ -119,8 +174,10 @@ def log_run_finish(
     sites_scraped: int,
     new_jobs_found: int,
     jobs_scored: int,
+    jobs_filtered: int,
     jobs_emailed: int,
     api_errors: int,
+    pre_screen_errors: int,
     status: str,
     conn: sqlite3.Connection,
 ) -> None:
@@ -128,8 +185,49 @@ def log_run_finish(
     conn.execute(
         """UPDATE run_log SET
            finished_at=?, sites_scraped=?, new_jobs_found=?,
-           jobs_scored=?, jobs_emailed=?, api_errors=?, status=?
+           jobs_scored=?, jobs_filtered=?, jobs_emailed=?,
+           api_errors=?, pre_screen_errors=?, status=?
            WHERE id=?""",
-        (now, sites_scraped, new_jobs_found, jobs_scored, jobs_emailed, api_errors, status, run_id),
+        (now, sites_scraped, new_jobs_found, jobs_scored, jobs_filtered,
+         jobs_emailed, api_errors, pre_screen_errors, status, run_id),
     )
     conn.commit()
+
+
+def get_run_stats(n_days: int, conn: sqlite3.Connection) -> dict:
+    """
+    Return aggregate stats for the last n_days for the weekly health report.
+    Queries run_log and feedback tables.
+    """
+    cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=n_days)).isoformat()
+    rows = conn.execute(
+        """SELECT jobs_scored, jobs_filtered, api_errors, pre_screen_errors, status
+           FROM run_log
+           WHERE started_at >= ? AND finished_at IS NOT NULL""",
+        (cutoff,),
+    ).fetchall()
+
+    total_scored = sum(r["jobs_scored"] or 0 for r in rows)
+    total_filtered = sum(r["jobs_filtered"] or 0 for r in rows)
+    total_api_errors = sum(r["api_errors"] or 0 for r in rows)
+    total_pre_screen_errors = sum(r["pre_screen_errors"] or 0 for r in rows)
+    run_statuses = [r["status"] for r in rows]
+    failed_runs = sum(1 for s in run_statuses if s in ("failed", "partial"))
+
+    labeled = conn.execute(
+        "SELECT COUNT(*) FROM feedback WHERE timestamp >= ?", (cutoff,)
+    ).fetchone()[0]
+
+    cost_usd = total_filtered * 0.0001 + total_scored * 0.001
+
+    return {
+        "n_runs": len(rows),
+        "failed_runs": failed_runs,
+        "total_scored": total_scored,
+        "total_filtered": total_filtered,
+        "total_api_errors": total_api_errors,
+        "total_pre_screen_errors": total_pre_screen_errors,
+        "filter_hit_rate": (total_filtered / (total_filtered + total_scored)) if (total_filtered + total_scored) > 0 else 0.0,
+        "labeled_count": labeled,
+        "cost_usd": cost_usd,
+    }

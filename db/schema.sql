@@ -34,15 +34,17 @@ CREATE TABLE IF NOT EXISTS failed_extractions (
 );
 
 CREATE TABLE IF NOT EXISTS run_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at      TEXT    NOT NULL,
-    finished_at     TEXT,
-    sites_scraped   INTEGER DEFAULT 0,
-    new_jobs_found  INTEGER DEFAULT 0,
-    jobs_scored     INTEGER DEFAULT 0,
-    jobs_emailed    INTEGER DEFAULT 0,
-    api_errors      INTEGER DEFAULT 0,
-    status          TEXT    -- 'success' | 'partial' | 'failed'
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at          TEXT    NOT NULL,
+    finished_at         TEXT,
+    sites_scraped       INTEGER DEFAULT 0,
+    new_jobs_found      INTEGER DEFAULT 0,
+    jobs_scored         INTEGER DEFAULT 0,
+    jobs_filtered       INTEGER DEFAULT 0,
+    jobs_emailed        INTEGER DEFAULT 0,
+    api_errors          INTEGER DEFAULT 0,
+    pre_screen_errors   INTEGER DEFAULT 0,
+    status              TEXT    -- 'success' | 'partial' | 'failed'
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_url_hash     ON jobs(url_hash);
@@ -69,6 +71,37 @@ CREATE INDEX IF NOT EXISTS idx_feedback_ts       ON feedback(timestamp);
 -- Stores organisations suggested by the weekly field-intelligence recommender.
 -- status: 'pending' (not yet actioned) | 'skipped' (user dismissed via email link)
 -- Adding a scraper is a manual code edit; there is no 'added' status.
+-- ── Pre-filter audit log ──────────────────────────────────────────────────────
+-- Jobs rejected before LLM scoring. Training data (negatives) for future ranker.
+-- expires_at: is_seen() treats this row as 'new' after expiry (allows re-scrape).
+-- NOTE (A3): expires_at is stored in space-separated SQLite format
+--   (strftime('%Y-%m-%d %H:%M:%S', 'now', '+30 days')) so the string comparison
+--   expires_at > datetime('now') stays within one format.
+CREATE TABLE IF NOT EXISTS filtered_jobs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    url           TEXT    NOT NULL,
+    url_hash      TEXT    NOT NULL UNIQUE,
+    source        TEXT    NOT NULL,
+    title         TEXT,
+    organization  TEXT,
+    raw_text      TEXT,              -- first 4000 chars; required for ranker training features
+    filter_stage  TEXT    NOT NULL,  -- 'url_search' | 'pre_screen' | 'embedding'
+    filter_reason TEXT,              -- pre_screen reason sentence or similarity score
+    similarity    REAL,              -- populated for embedding approach only
+    filtered_at   TEXT    NOT NULL,
+    expires_at    TEXT    NOT NULL   -- space-separated SQLite format; is_seen returns 'new' after this
+);
+CREATE INDEX IF NOT EXISTS idx_filtered_url_hash ON filtered_jobs(url_hash);
+CREATE INDEX IF NOT EXISTS idx_filtered_source   ON filtered_jobs(source);
+
+-- ── Implicit view signal (weak positive for ranker training) ──────────────────
+CREATE TABLE IF NOT EXISTS job_views (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id    INTEGER NOT NULL,
+    viewed_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_views_job_id ON job_views(job_id);
+
 CREATE TABLE IF NOT EXISTS source_suggestions (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     suggested_at     TEXT    NOT NULL,

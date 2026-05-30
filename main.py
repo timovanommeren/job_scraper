@@ -134,22 +134,39 @@ def run_scrapers(settings: dict, site_filter: str | None = None) -> list:
 
 def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple:
     """
-    For each RawJob: check dedup (skip if seen), call safe_extract_and_score(),
-    insert into DB. Returns (new_postings, api_error_count).
+    For each RawJob: dedup → pre_screen → extract_and_score → insert.
+    Returns (new_postings, api_error_count, jobs_filtered_count, pre_screen_error_count).
     In dry_run mode, scores but does NOT insert into DB.
     """
-    from db.dedup import is_seen, update_last_seen, insert_job, insert_failed
-    from agents.extractor_scorer import safe_extract_and_score
+    from db.dedup import is_seen, update_last_seen, insert_job, insert_failed, insert_filtered
+    from agents.extractor_scorer import safe_extract_and_score, pre_screen
 
     new_postings = []
     api_errors = 0
+    jobs_filtered = 0
+    pre_screen_errors = 0
 
     for raw in raw_jobs:
         if not raw.url:
             logger.warning(f"Skipping job with empty URL (source={raw.source}, title={raw.title!r})")
             continue
-        if is_seen(raw.url, conn):
+
+        # Dedup: explicit string comparison required — all return values are truthy strings.
+        status = is_seen(raw.url, conn)
+        if status == "scored":
             update_last_seen(raw.url, conn)
+            continue
+        elif status == "filtered":
+            continue  # do NOT call update_last_seen — job is not in jobs table
+
+        # Layer 2: cheap field-check before full LLM extraction.
+        passed, reason = pre_screen(raw, client)
+        if reason == "pre_screen_error":
+            pre_screen_errors += 1
+        if not passed:
+            jobs_filtered += 1
+            if not dry_run:
+                insert_filtered(raw, "pre_screen", reason, conn)
             continue
 
         posting = safe_extract_and_score(raw, client)
@@ -163,7 +180,7 @@ def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple
             insert_job(raw, posting, conn)
         new_postings.append((raw, posting))
 
-    return new_postings, api_errors
+    return new_postings, api_errors, jobs_filtered, pre_screen_errors
 
 
 def send_digest(new_postings: list, stats, conn, test_mode: bool = False) -> int:
@@ -304,6 +321,8 @@ def main(
     api_errors = 0
     new_count = 0
     scored_count = 0
+    filtered_count = 0
+    pre_screen_err = 0
     emailed_count = 0
     status = "success"
 
@@ -328,18 +347,23 @@ def main(
         sites_scraped = len(set(j.source for j in raw_jobs))
         logger.info(f"Total raw jobs fetched: {len(raw_jobs)} from {sites_scraped} sources")
 
-        new_postings, api_errors = score_new_jobs(raw_jobs, conn, client, dry_run=test_mode or dry_run)
+        new_postings, api_errors, filtered_count, pre_screen_err = score_new_jobs(
+            raw_jobs, conn, client, dry_run=test_mode or dry_run
+        )
         scored_count = len(new_postings)
-        # new_count = jobs not yet in the DB this run (scored OK + API failures).
-        # Previously was len(raw_jobs) which counted already-seen duplicates too.
         new_count = scored_count + api_errors
-        logger.info(f"New jobs scored: {scored_count} ({api_errors} API errors)")
+        logger.info(
+            f"New jobs: {scored_count} scored, {filtered_count} pre-filtered, {api_errors} API errors"
+            + (f", {pre_screen_err} pre-screen failures (failing open)" if pre_screen_err else "")
+        )
 
         stats = {
             "sites_scraped": sites_scraped,
             "new_jobs_found": new_count,
             "jobs_scored": scored_count,
+            "jobs_filtered": filtered_count,
             "api_errors": api_errors,
+            "pre_screen_errors": pre_screen_err,
         }
 
         if not dry_run:
@@ -358,8 +382,10 @@ def main(
             sites_scraped=len(set(j.source for j in raw_jobs)) if "raw_jobs" in dir() else 0,
             new_jobs_found=new_count,
             jobs_scored=scored_count,
+            jobs_filtered=filtered_count if "filtered_count" in dir() else 0,
             jobs_emailed=emailed_count,
             api_errors=api_errors,
+            pre_screen_errors=pre_screen_err if "pre_screen_err" in dir() else 0,
             status=status,
             conn=conn,
         )

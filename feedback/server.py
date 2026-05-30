@@ -50,6 +50,14 @@ def _get_db():
     return g.db
 
 
+def _log_view(job_id: int) -> None:
+    try:
+        from db.dedup import log_view
+        log_view(job_id, _get_db())
+    except Exception:
+        log.warning(f"log_view failed for job_id={job_id}", exc_info=True)
+
+
 @app.teardown_appcontext
 def _close_db(exc):
     db = g.pop("db", None)
@@ -344,6 +352,7 @@ def job_detail(job_id: int):
     job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if job is None:
         return _page_html("Not found", "<p>Job not found.</p>"), 404
+    _log_view(job_id)
 
     # Any existing feedback for this job?
     fb = conn.execute(

@@ -391,6 +391,57 @@ def _field_intelligence_html(recommendation, conn) -> str:
     )
 
 
+def _pipeline_health_html(conn, strong_thresh: int, also_thresh: int) -> str:
+    """Weekly pipeline health block for the digest email."""
+    try:
+        from db.dedup import get_run_stats
+        import yaml as _yaml
+        stats = get_run_stats(7, conn)
+        settings_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+        cfg = _yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+        pf_mode = cfg.get("pre_filter", {}).get("mode", "B")
+    except Exception:
+        logger.warning("Pipeline health block failed — skipping")
+        return ""
+
+    filter_rate_pct = f"{stats['filter_hit_rate'] * 100:.0f}%"
+    cost_str = f"${stats['cost_usd']:.4f}"
+
+    warn = ""
+    if stats["total_pre_screen_errors"] > 0:
+        warn = (
+            f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:4px;'
+            f'padding:8px;margin-bottom:8px;color:#dc2626;font-size:12px">'
+            f'⚠️ <strong>{stats["total_pre_screen_errors"]} pre-screen errors</strong> this week '
+            f'— pre-filter may be disabled (failing open to full scoring). Check logs.</div>'
+        )
+
+    rows_html = "".join(
+        f'<tr><td style="padding:3px 8px;color:#374151">{k}</td>'
+        f'<td style="padding:3px 8px;color:#1a1a2e;font-weight:600">{v}</td></tr>'
+        for k, v in [
+            ("Runs (7 days)", f"{stats['n_runs']} ({stats['failed_runs']} failed/partial)"),
+            ("Jobs scored", str(stats["total_scored"])),
+            ("Jobs pre-filtered", str(stats["total_filtered"])),
+            ("Filter hit rate", filter_rate_pct),
+            ("Est. API cost (USD)", cost_str),
+            ("Feedback labels", str(stats["labeled_count"])),
+            ("Layer 2 mode", f"{'B — Claude pre-screen' if pf_mode == 'B' else pf_mode}"),
+            ("Strong threshold", f"≥ {strong_thresh}"),
+            ("Also-found threshold", f"≥ {also_thresh}"),
+        ]
+    )
+
+    return (
+        '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;'
+        'padding:16px;margin-top:24px">'
+        '<h2 style="color:#475569;margin-top:0;font-size:14px">🔧 Pipeline Health (last 7 days)</h2>'
+        + warn +
+        f'<table style="font-size:12px;border-collapse:collapse">{rows_html}</table>'
+        '</div>'
+    )
+
+
 def send_weekly_digest(conn, test_mode: bool = False) -> int:
     """
     Query all jobs added in the last 7 days, send weekly digest email.
@@ -414,9 +465,10 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
         logger.info("[NOTIFIER] Weekly digest: no jobs found in last 7 days. Skipping.")
         return 0
 
-    strong  = [r for r in rows if (r["relevance_score"] or 0) >= 8]
-    relevant = [r for r in rows if 5 <= (r["relevance_score"] or 0) <= 7]
-    low      = [r for r in rows if (r["relevance_score"] or 0) <= 4]
+    strong_thresh, also_thresh = _load_thresholds()
+    strong   = [r for r in rows if (r["relevance_score"] or 0) >= strong_thresh]
+    relevant = [r for r in rows if also_thresh <= (r["relevance_score"] or 0) < strong_thresh]
+    low      = [r for r in rows if (r["relevance_score"] or 0) < also_thresh]
 
     # Run field-intelligence recommender before test_mode bail-out so it prints in test mode too.
     recommendation = None
@@ -443,11 +495,11 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
 
     if test_mode:
         print(f"\n--- WEEKLY DIGEST PREVIEW ({date_range}) ---")
-        print(f"Strong (8-10): {len(strong)}")
+        print(f"Strong ({strong_thresh}-10): {len(strong)}")
         for r in strong:
             print(f"  [{r['relevance_score']}/10] {r['title']}")
-        print(f"Relevant (5-7): {len(relevant)}")
-        print(f"Low (1-4): {len(low)}")
+        print(f"Relevant ({also_thresh}-{strong_thresh - 1}): {len(relevant)}")
+        print(f"Low (1-{also_thresh - 1}): {len(low)}")
         if recommendation:
             print(f"\nField Profile: {recommendation.profile_summary}")
             if recommendation.suggestions:
@@ -465,11 +517,11 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
         cards = "\n".join(job_html(r) for r in _sort_by_deadline(job_rows))
         return f"<h2 style='margin-top:24px'>{title_html} ({len(job_rows)})</h2>\n{cards}"
 
-    strong_sec   = _section("🎯 Strong Matches — 8–10", strong)
-    relevant_sec = _section("💡 Relevant — 5–7",        relevant)
-    low_sec      = _section("📋 Also Scraped — 1–4",    low) if low else ""
+    strong_sec   = _section(f"🎯 Strong Matches — {strong_thresh}–10", strong)
+    relevant_sec = _section(f"💡 Relevant — {also_thresh}–{strong_thresh - 1}", relevant)
+    low_sec      = _section(f"📋 Also Scraped — 1–{also_thresh - 1}", low) if low else ""
     field_intel  = _field_intelligence_html(recommendation, conn)
-
+    health_block = _pipeline_health_html(conn, strong_thresh, also_thresh)
     feedback_footer = _feedback_footer_html()
 
     html = f"""<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;max-width:700px;margin:auto;padding:20px">
@@ -485,6 +537,7 @@ def send_weekly_digest(conn, test_mode: bool = False) -> int:
 {relevant_sec}
 {low_sec}
 {field_intel}
+{health_block}
 <hr style="margin:24px 0">
 <p style="color:#888;font-size:12px">
   View all jobs and give feedback at

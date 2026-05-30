@@ -28,6 +28,8 @@ def init_db() -> None:
         # Safe migrations for databases created before these columns existed
         _safe_add_column(conn, "jobs", "deadline", "TEXT")
         _safe_add_column(conn, "feedback", "tags", "TEXT")  # JSON list of tag strings
+        _safe_add_column(conn, "run_log", "jobs_filtered", "INTEGER DEFAULT 0")
+        _safe_add_column(conn, "run_log", "pre_screen_errors", "INTEGER DEFAULT 0")
         logger.info(f"Database initialised at {DB_PATH}")
         logger.info("Schema: source_suggestions table ensured")
     except Exception:

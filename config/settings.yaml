@@ -14,13 +14,16 @@ filtering:
   #   Daily "Strong Matches" section:  score >= strong_match_threshold
   #   Daily "Also Found" section:      score >= email_also_min_score (and < strong_match_threshold)
   #   Never emailed:                   score <  email_also_min_score
-  strong_match_threshold: 8
+  strong_match_threshold: 6
   maybe_threshold: 5
-  email_also_min_score: 6
+  email_also_min_score: 5
 
 email:
   send_if_no_new_jobs: true
   max_jobs_in_email: 50
+
+pre_filter:
+  mode: "B"   # 'B' = Claude pre-screen | 'C' = embedding similarity (see TODOS for migration criteria)
 
 source_recommender:
   min_jobs: 5   # minimum high-rated jobs (score >= 8) needed to trigger suggestions

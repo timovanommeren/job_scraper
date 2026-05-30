@@ -97,6 +97,51 @@ SCORING INSTRUCTIONS:
 
 SYSTEM_PROMPT = _load_system_prompt()
 
+# ── Pre-screen (Layer 2 cheap field-check) ─────────────────────────────────────
+
+PRESCREEN_SYSTEM_PROMPT = (
+    "You are a domain classifier. Answer only YES or NO, then one sentence of reasoning."
+)
+
+
+class _PreScreenResult(BaseModel):
+    relevant: bool = Field(
+        description="True if job is in the domain of quantitative social/behavioural science, "
+                    "public policy research methods, or public health. False otherwise."
+    )
+    reason: str = Field(description="One sentence explaining the classification decision.")
+
+
+def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job") -> tuple[bool, str]:
+    """
+    Cheap field-check before full LLM extraction.
+    Returns (True, reason) if job should proceed to scoring.
+    Returns (False, reason) if job should be filtered.
+    Fail-open: any exception returns (True, 'pre_screen_error').
+
+    content_type is a placeholder for future conference/funding_call dispatch (see R5 TODO).
+    """
+    model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+    max_chars = 300
+    user_content = (
+        f"Title: {raw_job.title}\n"
+        f"Text: {(raw_job.raw_text or '')[:max_chars]}\n\n"
+        "Is this job in the domain of quantitative social/behavioural science, "
+        "public policy research methods, or public health?"
+    )
+    try:
+        result = client.chat.completions.create(
+            model=model,
+            max_tokens=80,
+            messages=[{"role": "user", "content": user_content}],
+            system=PRESCREEN_SYSTEM_PROMPT,
+            response_model=_PreScreenResult,
+        )
+        return result.relevant, result.reason
+    except Exception:
+        logger.warning(f"pre_screen failed for {raw_job.url!r} — failing open")
+        return True, "pre_screen_error"
+
 
 def _get_full_system_prompt() -> str:
     """Return system prompt + any feedback-based calibration additions."""

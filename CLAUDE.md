@@ -107,7 +107,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **LLM:** Anthropic API only. Model: `claude-haiku-4-5-20251001` (default in `extractor_scorer.py`). Override via `CLAUDE_MODEL` env var. **Never use Ollama, never use OpenAI.**
 - **LLM client:** `instructor` library wrapping `anthropic.Anthropic()` — validates structured output against Pydantic schema, retries on validation errors.
 - **Scraping:** `requests` + `beautifulsoup4` for server-rendered pages; `playwright` (async Chromium, headless) for JS-rendered SPAs.
-- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 5 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`, `source_suggestions`. `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). `source_suggestions` stores weekly field-intelligence org suggestions (status: `pending` | `skipped`). Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
+- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 7 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`, `source_suggestions`, `filtered_jobs`, `job_views`. `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). `source_suggestions` stores weekly field-intelligence org suggestions (status: `pending` | `skipped`). `filtered_jobs` stores jobs rejected by Layer 2 pre-screen (30-day TTL via `expires_at`; used as negative training examples). `job_views` stores Flask job-detail page views (implicit positive signal for future ranker). `run_log` now tracks `jobs_filtered` and `pre_screen_errors` counters. Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
 - **Web framework:** Flask 3.x, dev server only, `host="127.0.0.1"` — localhost only, not network-accessible.
 - **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password. Each job card includes a 1–10 rating row; pills link to the CF Worker `/feedback` route with a score param.
 - **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
@@ -138,6 +138,7 @@ CF_WORKER_SECRET         # Optional. Shared HMAC secret (set via wrangler secret
 
 **Where to find things for common changes:**
 - Change how jobs are scored or what fields are extracted → `agents/extractor_scorer.py` + `config/profile.yaml`
+- Change the Layer 2 pre-screen prompt or logic → `agents/extractor_scorer.py:pre_screen()` + `PRESCREEN_SYSTEM_PROMPT`
 - Change score thresholds (what gets emailed) → `config/settings.yaml` (`strong_match_threshold`, `email_also_min_score`) — loaded at startup by `notifier/gmail.py:_load_thresholds()`
 - Change the email template or subject line → `notifier/gmail.py:build_daily_html()` / `send_weekly_digest()`
 - Change the rating row (number pills) in email → `notifier/gmail.py:job_html()` + `_feedback_action_url()`
@@ -197,6 +198,27 @@ Full file dependency diagram: [ARCHITECTURE.md — File Dependency Diagram](ARCH
 
 - User-facing settings → `config/settings.yaml`. Secrets → `.env`. Never hardcode API keys, email credentials, or model names in source files.
 - If adding a new threshold or config value, wire it through `settings.yaml` and read it in code. Follow the `_load_thresholds()` pattern in `notifier/gmail.py` as a template.
+
+---
+
+## Layer 2 Pre-filter: B→C Transition
+
+The pipeline runs a cheap Claude Haiku pre-screen (Option B) before full LLM extraction. Option C (sentence-transformer embedding similarity) is the planned long-term replacement. Do NOT migrate until ALL three trigger conditions are met:
+
+1. `Layer 2 mode: B` in the weekly health report AND you are expanding to conferences/funding calls
+2. Weekly API cost ≥ €5/month (visible in health report)
+3. `Labeled jobs` ≥ 300 (visible in health report)
+
+**Transition checklist (when conditions are met):**
+1. Run `scripts/calibrate_threshold.py` — embeds all `db/jobs.db` jobs, finds the natural similarity gap, writes `T_low` and `T_high` to `config/settings.yaml`
+2. Replace `pre_screen()` function body in `agents/extractor_scorer.py` with embedding logic (caller interface unchanged: `pre_screen(raw_job, client, content_type='job') -> tuple[bool, str]`)
+3. Change `config/settings.yaml: pre_filter.mode` from `"B"` to `"C"`
+4. Run `python main.py --test` and confirm filter hit rate is plausible (check weekly health report next Tuesday)
+
+**Key files:**
+- `agents/extractor_scorer.py:pre_screen()` — swap function body here only
+- `config/settings.yaml:pre_filter.mode` — set to `"C"` after migration
+- `TODOS.md` — Option C migration entry has full calibration spec
 
 ---
 
