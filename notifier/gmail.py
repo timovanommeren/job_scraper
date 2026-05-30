@@ -97,7 +97,7 @@ class RunStats:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def should_send_daily(new_postings: list) -> bool:
-    """Return True only if at least one job in new_postings has score >= 8."""
+    """Return True only if at least one job in new_postings has score >= STRONG_THRESHOLD."""
     return any(posting.relevance_score >= STRONG_THRESHOLD
                for _, posting in new_postings)
 

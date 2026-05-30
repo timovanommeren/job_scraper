@@ -136,28 +136,34 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
          ▼
   ┌─ score_new_jobs() ─────────────────────────────────────────┐
   │  for each RawJob:                                          │
-  │    1. db/dedup.py:is_seen(url, conn)                       │
-  │       → YES: update last_seen_at, skip                     │
-  │       → NO: proceed                                        │
-  │    2. agents/extractor_scorer.py:safe_extract_and_score()  │
-  │       → POST to Anthropic API (claude-haiku-4-5-*)         │
-  │       → returns JobPosting (structured Pydantic model)     │
-  │       → fields: title, organization, location,             │
-  │                 contract_type, deadline, description_snippet│
-  │                 tags[], relevance_score (1–10),             │
-  │                 relevance_tier, relevance_reason            │
-  │    3. db/dedup.py:insert_job(raw, posting, conn)           │
-  │       → writes to jobs table in db/jobs.db                 │
+  │    1. db/dedup.py:is_seen(url, conn) → 'scored'|'filtered'|'new'
+  │       → 'scored':   update last_seen_at, skip             │
+  │       → 'filtered': skip (TTL-based, expires after 30d)   │
+  │       → 'new':      proceed to Layer 2                    │
+  │    2. agents/extractor_scorer.py:pre_screen()  [Layer 2]  │
+  │       → Cheap Haiku yes/no field-check (title + 300 chars)│
+  │       → Fail-open: any exception → (True, 'pre_screen_error')
+  │       → filtered: db/dedup.py:insert_filtered() → filtered_jobs
+  │       → passed:   proceed to full scoring                 │
+  │    3. agents/extractor_scorer.py:safe_extract_and_score() │
+  │       → POST to Anthropic API (claude-haiku-4-5-*)        │
+  │       → returns JobPosting (structured Pydantic model)    │
+  │       → fields: title, organization, location,            │
+  │                 contract_type, deadline, description_snippet
+  │                 tags[], relevance_score (1–10),            │
+  │                 relevance_tier, relevance_reason           │
+  │    4. db/dedup.py:insert_job(raw, posting, conn)          │
+  │       → writes to jobs table in db/jobs.db                │
   └────────────────────────────────────────────────────────────┘
          │ list[(RawJob, JobPosting)]  (only new, scored jobs)
          ▼
   ┌─ send_digest() ────────────────────────────────────────────┐
   │  gmail.py:should_send_daily()                              │
-  │    → sends email only if ANY score >= 8                    │
+  │    → sends email only if ANY score >= strong_match_threshold (6)
   │  if send:                                                  │
-  │    strong_rows = jobs with score >= 8                      │
-  │    also_rows   = jobs with score 6–7                       │
-  │    jobs with score <= 5: stored in DB, not emailed         │
+  │    strong_rows = jobs with score >= 6  (strong_match_threshold)
+  │    also_rows   = jobs with score 5     (email_also_min_score)
+  │    jobs with score <= 4: stored in DB, not emailed         │
   │    notifier/gmail.py:send_digest()                         │
   │      → SMTP via smtp.gmail.com:465 (SSL)                   │
   │      → email includes: job cards, deadline badges,         │
@@ -169,7 +175,9 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
   db/dedup.py:log_run_finish()  →  run_log table
 ```
 
-**Where deduplication happens:** In `score_new_jobs()`, before any API call. The function calls `db/dedup.py:is_seen(url, conn)` which computes `SHA-256(canonical_url)` and queries the `url_hash` index. If the hash exists, the job is skipped and `last_seen_at` is updated. This is O(1) and happens before any network call to Anthropic.
+**Where deduplication happens:** In `score_new_jobs()`, before any API call. `db/dedup.py:is_seen(url, conn)` returns `'scored'` (in `jobs` table), `'filtered'` (in non-expired `filtered_jobs`), or `'new'`. Only `'new'` jobs proceed. O(1) per check; happens before any Anthropic call.
+
+**Where pre-screening happens:** After dedup, before full scoring. `agents/extractor_scorer.py:pre_screen()` sends title + 300 chars to Haiku with a yes/no domain-relevance prompt. Filtered jobs go to `filtered_jobs` table (30-day TTL). Fail-open: any exception passes the job through to full scoring (logged as `pre_screen_errors` in `run_log`).
 
 **Where scoring happens:** `agents/extractor_scorer.py:extract_and_score()`, called via `safe_extract_and_score()`. The model is `claude-haiku-4-5-20251001` (controlled by `CLAUDE_MODEL` env var). The system prompt comes from `config/profile.yaml` (authoritative) or the embedded fallback in `extractor_scorer.py` if profile.yaml is missing.
 
@@ -183,12 +191,12 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
 
 1. `load_settings()` — reads `config/settings.yaml` into a dict
 2. `setup_logging()` — configures `RotatingFileHandler` → `logs/scraper.log` + `StreamHandler` → stdout
-3. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline` column if missing
+3. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors` columns if missing
 4. `db.dedup.get_connection()` — opens SQLite connection with WAL mode and row_factory
 5. `agents.extractor_scorer.build_client()` — creates `instructor.from_anthropic(Anthropic(api_key=...))`
 6. `log_run_start(conn)` — inserts a row into `run_log` table, returns `run_id`
 7. `run_scrapers(settings)` — calls all 17 registered scrapers, aggregates `list[RawJob]`
-8. `score_new_jobs(raw_jobs, conn, client)` — dedup + score + insert (see Data Flow above)
+8. `score_new_jobs(raw_jobs, conn, client)` — dedup + pre-screen + score + insert (see Data Flow above)
 9. `send_digest(new_postings, stats, conn)` — conditionally sends email
 10. `log_run_finish(...)` — updates `run_log` row with final stats and status
 
@@ -354,8 +362,21 @@ The scoring system prompt is loaded from `config/profile.yaml` (`system_prompt:`
 
 **System prompt augmentation:** Before every API call, `_get_full_system_prompt()` is called. This appends the output of `feedback/profile_updater.py:generate_prompt_additions()` — a block listing recent liked/passed jobs as few-shot calibration examples. This means **past feedback actively modifies future scoring** in real time.
 
+### Pre-screen (Layer 2 field-check)
+
+`pre_screen(raw_job, client, content_type='job') -> tuple[bool, str]`
+
+Cheap domain-relevance check that runs **before** full extraction. Sends title + first 300 chars to Haiku with `PRESCREEN_SYSTEM_PROMPT` ("You are a domain classifier. Answer only YES or NO, then one sentence of reasoning."). Uses a minimal `_PreScreenResult` Pydantic model (`relevant: bool`, `reason: str`) via instructor tool_use format.
+
+- Returns `(True, reason)` → job proceeds to full scoring
+- Returns `(False, reason)` → job written to `filtered_jobs` and skipped
+- Returns `(True, 'pre_screen_error')` on any exception (fail-open) — logged as `pre_screen_errors` in `run_log`
+- `max_tokens=250` (instructor tool_use JSON wrapper requires ~70 token overhead; do not lower)
+
+To migrate Layer 2 from Option B (Claude pre-screen) to Option C (embedding similarity): replace only the function body of `pre_screen()`. The caller interface is unchanged. See `CLAUDE.md: Layer 2 Pre-filter: B→C Transition` for migration criteria.
+
 ### Retry policy
-`@retry(stop_after_attempt(3), wait_exponential(min=5, max=60))` on `RateLimitError` and `APIConnectionError` only. Other errors are not retried.
+`@retry(stop_after_attempt(3), wait_exponential(min=5, max=60))` on `RateLimitError` and `APIConnectionError` only. Other errors are not retried. `pre_screen()` has no retry decorator — exceptions return fail-open immediately.
 
 ### Deadline backfill
 `backfill_deadlines(conn, client)` (triggered by `--backfill-deadlines`) runs a focused extraction on jobs where `deadline IS NULL`. Uses a lighter `_DeadlineOnly` model (one field) and `max_workers=5` for parallel calls.
@@ -417,16 +438,43 @@ retried     INTEGER DEFAULT 0
 
 **`run_log`** — one row per `main.py` run
 ```
-id              INTEGER PK
-started_at      TEXT
-finished_at     TEXT
-sites_scraped   INTEGER
-new_jobs_found  INTEGER    -- truly new URLs (not previously seen in DB)
-jobs_scored     INTEGER    -- successfully scored subset of new_jobs_found
-jobs_emailed    INTEGER
-api_errors      INTEGER
-status          TEXT       -- success | partial | failed
+id                  INTEGER PK
+started_at          TEXT
+finished_at         TEXT
+sites_scraped       INTEGER
+new_jobs_found      INTEGER    -- truly new URLs (not previously seen in DB)
+jobs_scored         INTEGER    -- successfully scored subset of new_jobs_found
+jobs_filtered       INTEGER    -- rejected by Layer 2 pre-screen
+jobs_emailed        INTEGER
+api_errors          INTEGER    -- full-scoring API failures
+pre_screen_errors   INTEGER    -- pre_screen() exceptions (fail-open; non-zero = filter degraded)
+status              TEXT       -- success | partial | failed
 ```
+
+**`filtered_jobs`** — jobs rejected by Layer 2 pre-screen before full scoring
+```
+id            INTEGER PK AUTOINCREMENT
+url           TEXT NOT NULL
+url_hash      TEXT UNIQUE           -- SHA-256; checked by is_seen() alongside jobs.url_hash
+source        TEXT NOT NULL
+title         TEXT
+organization  TEXT
+raw_text      TEXT                  -- first 4000 chars; used as negative training features
+filter_stage  TEXT NOT NULL         -- 'url_search' | 'pre_screen' | 'embedding'
+filter_reason TEXT                  -- one-sentence reason from pre_screen, or similarity score
+similarity    REAL                  -- cosine similarity (Option C only)
+filtered_at   TEXT NOT NULL
+expires_at    TEXT NOT NULL         -- SQLite format; is_seen() returns 'new' after this (30-day TTL)
+```
+Note: `is_seen()` returns `'filtered'` only for non-expired rows (`expires_at > datetime('now')`). After expiry the job can re-enter the pipeline (useful for reposted positions).
+
+**`job_views`** — Flask job-detail page views (implicit positive signal for future ranker)
+```
+id        INTEGER PK AUTOINCREMENT
+job_id    INTEGER NOT NULL          -- FK to jobs.id
+viewed_at TEXT NOT NULL
+```
+Deduplicated to daily grain when used as training features. Inserted by `feedback/server.py` on every `GET /jobs/<id>` request.
 
 **`source_suggestions`** — org suggestions from the weekly field-intelligence recommender
 ```
@@ -443,12 +491,15 @@ Note: there is no `'added'` status. Adding a scraper is a manual code edit; the 
 
 ### Indexes
 ```sql
-idx_jobs_url_hash     ON jobs(url_hash)      -- O(1) dedup check
+idx_jobs_url_hash     ON jobs(url_hash)             -- O(1) dedup check
 idx_jobs_source       ON jobs(source)
 idx_jobs_emailed_at   ON jobs(emailed_at)
 idx_jobs_tier         ON jobs(relevance_tier)
 idx_feedback_job_id   ON feedback(job_id)
 idx_feedback_ts       ON feedback(timestamp)
+idx_filtered_url_hash ON filtered_jobs(url_hash)    -- O(1) filtered dedup check
+idx_filtered_source   ON filtered_jobs(source)
+idx_views_job_id      ON job_views(job_id)
 ```
 
 ### Connection settings
@@ -520,20 +571,22 @@ def _close_db(exc):
 ```python
 STRONG_THRESHOLD, ALSO_THRESHOLD = _load_thresholds()
 # Reads config/settings.yaml:
-#   filtering.strong_match_threshold  → default 8
-#   filtering.email_also_min_score    → default 6
+#   filtering.strong_match_threshold  → currently 6
+#   filtering.email_also_min_score    → currently 5
 # Falls back to (8, 6) if settings.yaml is missing or unreadable.
 WEEKLY_LOW_MIN = 1   # weekly digest includes all scored jobs (hardcoded)
 ```
 
 To change thresholds: edit `config/settings.yaml` — no code change needed. Changes take effect on the next `main.py` run (thresholds are loaded at module import time).
 
-Jobs with score < `email_also_min_score` (< 6 by default) are stored in the DB but **never appear in any email** unless you open `http://localhost:5001/jobs`.
+Jobs with score < `email_also_min_score` (< 5 currently) are stored in the DB but **never appear in any email** unless you open `http://localhost:5001/jobs`.
+
+**Note:** The Flask UI's tier filter (`/jobs?tier=strong_match`) uses hardcoded `WHERE relevance_score >= 8` — it does not read `settings.yaml`. After the threshold change this means the Flask "Strong Match" filter shows a superset of what the email considers strong. This is a known inconsistency to address separately.
 
 ### Daily email logic
-1. `should_send_daily(new_postings)` — returns True only if at least one score >= 8
+1. `should_send_daily(new_postings)` — returns True only if at least one score >= `STRONG_THRESHOLD` (6)
 2. If False: logs "No strong matches today. Skipping." and exits — no email sent
-3. If True: separates jobs into `strong_rows` (>=8) and `also_rows` (6–7), calls `_smtp_send()`
+3. If True: separates jobs into `strong_rows` (>= 6) and `also_rows` (= 5), calls `_smtp_send()`
 4. After successful send: `db/dedup.py:mark_emailed(job_ids)` sets `emailed_at` on all sent rows
 
 ### Weekly digest logic
@@ -718,11 +771,16 @@ scraper:
   raw_text_max_chars: 4000        # Max chars of raw_text passed to Claude (env var RAW_TEXT_MAX_CHARS overrides)
 
 filtering:
-  strong_match_threshold: 8      # Score >= this → "Strong Matches" in daily email; read by gmail.py
+  strong_match_threshold: 6      # Score >= this → "Strong Matches" in daily email; read by gmail.py
   maybe_threshold: 5             # Score >= this → "maybe" tier in DB/UI (not the email cutoff)
-  email_also_min_score: 6        # Score >= this → "Also Found" section in daily email; read by gmail.py
+  email_also_min_score: 5        # Score >= this → "Also Found" section in daily email; read by gmail.py
   # All three values are read by notifier/gmail.py:_load_thresholds() at startup.
   # Changing these values takes effect on the next main.py run.
+
+pre_filter:
+  mode: "B"                      # 'B' = Claude pre-screen | 'C' = embedding similarity
+                                 # Read by notifier/gmail.py weekly health block. See CLAUDE.md
+                                 # for B→C migration criteria.
 
 email:
   send_if_no_new_jobs: true      # Currently unused — the actual gate is should_send_daily() in gmail.py

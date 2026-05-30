@@ -1,6 +1,6 @@
 # Job Scraper
 
-A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 17 sources daily, scores each posting against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 8/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
+A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 17 sources daily, runs a cheap Claude pre-screen to filter out irrelevant postings, scores each remaining job against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 6/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
 
 Runs automatically via Windows Task Scheduler. No manual intervention needed once set up.
 
@@ -14,9 +14,11 @@ graph LR
     B --> C[main.py]
     C --> D[17 Scrapers]
     D --> E[Dedup check<br/>db/jobs.db]
-    E --> F[Claude Haiku<br/>Anthropic API]
-    F --> G[SQLite DB<br/>jobs + scores]
-    G --> H{score ≥ 8?}
+    E --> F[Pre-screen<br/>Claude Haiku]
+    F -- filtered --> M[filtered_jobs<br/>training data]
+    F -- passed --> G2[Full scoring<br/>Claude Haiku]
+    G2 --> G[SQLite DB<br/>jobs + scores]
+    G --> H{score ≥ 6?}
     H -- yes --> I[Gmail digest]
     H -- no --> J[DB only]
     G --> K[Flask UI<br/>localhost:5001]
@@ -58,14 +60,14 @@ graph LR
 | `JobScraperWeeklyDigest` | `python main.py --weekly-digest` | Every Tuesday at 08:00 |
 | `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Every hour (optional) |
 
-The daily task only sends an email when at least one job scores ≥ 8/10. The weekly digest emails everything found in the last 7 days, regardless of score, and includes a **"Your Field This Week"** section at the bottom: Claude analyses your highest-rated jobs from the past 90 days, writes a 2–3 sentence field profile, and suggests up to 3 organisations worth adding as scrapers. Each suggestion includes a careers page link and a one-tap "Skip" button that prevents it from appearing again. The feedback sync task is only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`.
+The daily task only sends an email when at least one job scores ≥ 6/10. The weekly digest emails everything found in the last 7 days, regardless of score, and includes a **"Your Field This Week"** section at the bottom: Claude analyses your highest-rated jobs from the past 90 days, writes a 2–3 sentence field profile, and suggests up to 3 organisations worth adding as scrapers. Each suggestion includes a careers page link and a one-tap "Skip" button that prevents it from appearing again. The feedback sync task is only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`.
 
 ---
 
 ## Common Commands
 
 ```bash
-python main.py                      # Full pipeline: scrape → score → DB → email (if score ≥ 8)
+python main.py                      # Full pipeline: scrape → pre-screen → score → DB → email (if score ≥ 6)
 python main.py --test               # Scrape + score, print digest preview — no DB writes, no email
 python main.py --dry-run            # Scrape + score + write DB — no email
 python main.py --site euraxess      # Run one scraper only (combine with --test for safe debugging)
