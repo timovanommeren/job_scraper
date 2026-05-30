@@ -1,8 +1,13 @@
 # TODOS
 
+> This file and GitHub Issues are kept in sync — see CLAUDE.md "TODOS.md ↔ GitHub Issues" for the sync protocol.
+> Each entry links to its GitHub issue. Issues created remotely should be added here at the next session.
+
+---
+
 ## P1 — Blocked on conditions being met
 
-### Option C migration: calibrate_threshold.py + embedding pre-filter
+### Option C migration: calibrate_threshold.py + embedding pre-filter · [#11](https://github.com/timovanommeren/job_scraper/issues/11)
 
 **What:** Write `scripts/calibrate_threshold.py` and execute the Layer 2 B→C migration.
 
@@ -23,7 +28,7 @@
 
 ## P2 — Deferred from multi-layer filter review (2026-05-30)
 
-### R4: Refine pre-screen prompt — remove org-based clause
+### R4: Refine pre-screen prompt — remove org-based clause · [#12](https://github.com/timovanommeren/job_scraper/issues/12)
 
 **What:** The current `PRESCREEN_SYSTEM_PROMPT` includes "research at a policy-oriented organisation" which is too broad (a marine ecologist at OECD passes). Remove this clause and restrict to discipline only: *"quantitative social/behavioural science, public policy research methods, or public health."*
 
@@ -35,7 +40,7 @@
 
 ---
 
-### R5: Define `content_type` prompt dispatch in `pre_screen()`
+### R5: Define `content_type` prompt dispatch in `pre_screen()` · [#13](https://github.com/timovanommeren/job_scraper/issues/13)
 
 **What:** `pre_screen(raw_job, client, content_type='job')` currently ignores `content_type`. Before the parameter is used for conferences/funding calls, implement a `_PRESCREEN_PROMPTS` dict keyed by content type so `content_type="conference"` doesn't silently fall back to the job prompt.
 
@@ -47,7 +52,7 @@
 
 ---
 
-### R6: Live verification gate before T6 (Euraxess Layer 1)
+### R6: Live verification gate before T6 (Euraxess Layer 1) · [#14](https://github.com/timovanommeren/job_scraper/issues/14)
 
 **What:** Before editing `scrapers/euraxess.py` for T6, run a live check that `?keywords=social+science` works with existing pagination. Add a comment to the scraper documenting the verified URL pattern and date verified.
 
@@ -59,7 +64,7 @@
 
 ---
 
-### A3: Harden `expires_at` datetime format in `filtered_jobs`
+### A3: Harden `expires_at` datetime format in `filtered_jobs` · [#15](https://github.com/timovanommeren/job_scraper/issues/15)
 
 **What:** Change `expires_at` storage from Python's `datetime.isoformat()` (T-separator, timezone suffix) to SQLite's native space-separated format so `expires_at > datetime('now')` is a safe same-format string comparison, not an accidentally-correct cross-format comparison.
 
@@ -71,25 +76,45 @@
 
 ---
 
-### GitHub issues integration
+### Feedback UX: CF Worker / Flask split · [#10](https://github.com/timovanommeren/job_scraper/issues/10)
 
-**What:** After generating TODOs in TODOS.md, automatically create matching GitHub issues via `gh issue create`. Currently blocked because tokens need `public_repo` scope. When creating a new token, check `public_repo` under "repo", then run `! gh auth login --with-token <<< "token"` and fire the queued `gh issue create` calls.
+**What:** Rethink the feedback architecture — two parallel paths (CF Worker + Flask) that write to the same data model with no clear rationale for which to use when.
 
-**Deferred from:** 2026-05-30 review session
+**Why:** Demonstrated today: stale Flask server caused silent write failure while still showing "Feedback saved!". The two forms (CF `/rate` and Flask `/jobs/{id}`) are maintained separately and can silently diverge. Needs engineer + designer review.
+
+**Deferred from:** 2026-05-30 session
 
 ---
 
 ## P2 — Deferred features
 
-### Score drift dashboard
+### Score drift dashboard · [#16](https://github.com/timovanommeren/job_scraper/issues/16)
+
 Track calibration drift over time: plot Claude's average score per week, flag if scoring distribution shifts significantly. Useful after the feedback loop has run for 2+ months with 50+ ratings.
+
 **Deferred from:** 2026-05-29 CEO plan (feedback loop)
 
-### Deadline reminder emails
+---
+
+### Deadline reminder emails · [#17](https://github.com/timovanommeren/job_scraper/issues/17)
+
 Send a second email N days before a job's deadline if it hasn't been rated yet.
+
 **Deferred from:** 2026-05-29 CEO plan (feedback loop)
 
-### Explore panel UX
+---
+
+### Explore panel UX · [#18](https://github.com/timovanommeren/job_scraper/issues/18)
+
 Surface 5 random low-scored (≤3), unviewed jobs in the Flask UI for active labeling.
 Data model is already in place (job_views LEFT JOIN). Needs UX design via /plan-design-review.
+
 **Deferred from:** 2026-05-30 multi-layer filter design
+
+---
+
+### Save / read later box · [#9](https://github.com/timovanommeren/job_scraper/issues/9)
+
+Allow interesting positions to be saved in a "read later" box in the Flask UI.
+
+**Deferred from:** 2026-05-30 (created as GitHub issue)

@@ -365,6 +365,23 @@ schtasks /end   /tn "JobScraperFeedbackServer"
 
 ---
 
+## TODOS.md ↔ GitHub Issues (bidirectional)
+
+`TODOS.md` and GitHub Issues are kept in sync — they are two views of the same backlog.
+
+**TODOS.md → GitHub Issues:** At the end of any session that adds entries to `TODOS.md`, create matching GitHub issues via `gh issue create`. Use the TODOS.md entry as the issue body. Requires a token with `public_repo` scope stored via `gh auth login --with-token`.
+
+**GitHub Issues → TODOS.md:** At the start of any session where the user mentions a GitHub issue, or when asked to sync, pull open issues with `gh issue list` and add any that are missing from `TODOS.md`. Timo may create issues remotely (e.g. from his phone) — these should be reflected in `TODOS.md` on the next session.
+
+**Format convention:**
+- Each TODOS.md entry should reference its GitHub issue number (e.g. `[#12](https://github.com/timovanommeren/job_scraper/issues/12)`)
+- Each GitHub issue should be self-contained (copy the full context from TODOS.md, not just a title)
+- When an item is completed, close the GitHub issue and remove or strike the TODOS.md entry
+
+**When to sync:** At session start if the user mentions "issues" or "todos", or explicitly asks to sync. Not required on every session — only when there's reason to believe they've diverged.
+
+---
+
 ## gstack
 
 Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
