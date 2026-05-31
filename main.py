@@ -80,6 +80,8 @@ def build_scraper_registry(settings: dict) -> dict:
     from scrapers.fgv import FGVScraper
     from scrapers.epso_bluebook import EPSOBluebookScraper
 
+    from scrapers.dutch_universities import create_university_scrapers
+
     classes = [
         EuraxessScraper,
         ImpactpoolScraper,
@@ -99,7 +101,9 @@ def build_scraper_registry(settings: dict) -> dict:
         FGVScraper,
         EPSOBluebookScraper,
     ]
-    return {cls.source_name: cls(settings) for cls in classes}
+    registry = {cls.source_name: cls(settings) for cls in classes}
+    registry.update(create_university_scrapers(settings))
+    return registry
 
 
 # ── Core pipeline functions ─────────────────────────────────────────────────────
