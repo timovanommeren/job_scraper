@@ -41,7 +41,7 @@ Some Dutch university PhD positions are posted directly on university sites and 
 
 ## P2 — Known limitation: Haiku 4.5 prompt caching not available
 
-### Prompt caching blocked on Haiku 4.5 · (no issue — track here)
+### Prompt caching blocked on Haiku 4.5 · [#19](https://github.com/timovanommeren/job_scraper/issues/19)
 
 **What:** `extract_and_score` already sends the system prompt in list-form with `cache_control: {"type": "ephemeral"}` (shipped 2026-05-31, commit `ef3228b`). The format is correct. Caching does not trigger.
 
