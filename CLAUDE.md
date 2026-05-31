@@ -9,7 +9,7 @@
 
 ## Project Identity
 
-A personal, automated job-hunting pipeline for **Timo van Ommeren** (timovanommeren@gmail.com). It scrapes 16 job sources daily, scores each posting against Timo's profile using the **Anthropic API (Claude Haiku)**, and sends a Gmail digest when strong matches (score ≥ 8/10) are found. A local Flask app at `localhost:5001` lets Timo browse all results and give feedback that actively recalibrates future scoring. Target roles: PhD positions in social/behavioural sciences, paid EU/UN traineeships, research analyst roles at policy think tanks.
+A personal, automated job-hunting pipeline for **Timo van Ommeren** (timovanommeren@gmail.com). It scrapes 24 job sources daily, scores each posting against Timo's profile using the **Anthropic API (Claude Haiku)**, and sends a Gmail digest when strong matches (score ≥ 8/10) are found. A local Flask app at `localhost:5001` lets Timo browse all results and give feedback that actively recalibrates future scoring. Target roles: PhD positions in social/behavioural sciences, paid EU/UN traineeships, research analyst roles at policy think tanks.
 
 Full system design: [ARCHITECTURE.md](ARCHITECTURE.md). Public overview: [README.md](README.md).
 
@@ -43,7 +43,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 
 ### Most Critical Rules (full list in NEVER Rules section)
 
-- **Never modify any working scraper** (Euraxess, AcademicTransfer, RAND, CASE Poland, JRC, Impactpool, Busara, WODC, SCP, Trimbos) unless the task explicitly targets them.
+- **Never modify any working scraper** (Euraxess, AcademicTransfer, RAND, CASE Poland, JRC, Impactpool, Busara, WODC, SCP, Trimbos, FGV, EPSO Blue Book) unless the task explicitly targets them.
 - **Anthropic API only.** Never use Ollama, OpenAI, or any other LLM provider.
 - **Never add `anthropic.Anthropic()` calls outside `agents/extractor_scorer.py`.**
 - **Never push to GitHub without being asked.** Save locally and present for review.
@@ -69,6 +69,13 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Trimbos-instituut | `scrapers/trimbos.py` | Playwright |
 | FGV | `scrapers/fgv.py` | Playwright (portal.fgv.br rejects Python TLS) |
 | EPSO Blue Book | `scrapers/epso_bluebook.py` | requests + BS4 |
+| Utrecht University | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
+| Tilburg University | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
+| Erasmus University Rotterdam | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
+| Radboud University | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
+| University of Amsterdam | `scrapers/dutch_universities.py` | Playwright, config-driven (PROVISIONAL selectors) |
+| Vrije Universiteit Amsterdam | `scrapers/dutch_universities.py` | Playwright, config-driven (PROVISIONAL selectors) |
+| University of Groningen | `scrapers/dutch_universities.py` | Playwright, config-driven (PROVISIONAL selectors) |
 
 ### Disabled Scrapers (return `[]` with a WARNING log — do not attempt to fix via code changes)
 
@@ -98,6 +105,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Dead function `get_unemailed_jobs()` | `db/dedup.py` | Defined but never called. Weekly digest queries DB directly in `gmail.py`. Safe to leave; don't repurpose without checking callers. |
 | Stale model name in `.env.example` | `.env.example` | Shows `claude-haiku-3-5-20251001`; actual default in `extractor_scorer.py` is `claude-haiku-4-5-20251001`. If someone copies `.env.example` verbatim, they get an outdated model name. |
 | Weekly digest doesn't deduplicate | `notifier/gmail.py:send_weekly_digest()` | A job emailed on Monday's daily digest will also appear in Tuesday's weekly digest. Intentional (weekly = retrospective), but non-obvious. |
+| Dutch university selectors are PROVISIONAL | `scrapers/dutch_universities.py` | All 7 university scrapers (uu, tilburg, eur, radboud, uva, vu, rug) have provisional CSS selectors. Watch `source_yields` in `run_log` — a persistent 0 means the selector needs updating, not that the uni has no open positions. Run `python main.py --site <name> --test` to verify. |
 
 ---
 
@@ -107,7 +115,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **LLM:** Anthropic API only. Model: `claude-haiku-4-5-20251001` (default in `extractor_scorer.py`). Override via `CLAUDE_MODEL` env var. **Never use Ollama, never use OpenAI.**
 - **LLM client:** `instructor` library wrapping `anthropic.Anthropic()` — validates structured output against Pydantic schema, retries on validation errors.
 - **Scraping:** `requests` + `beautifulsoup4` for server-rendered pages; `playwright` (async Chromium, headless) for JS-rendered SPAs.
-- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 7 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`, `source_suggestions`, `filtered_jobs`, `job_views`. `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). `source_suggestions` stores weekly field-intelligence org suggestions (status: `pending` | `skipped`). `filtered_jobs` stores jobs rejected by Layer 2 pre-screen (30-day TTL via `expires_at`; used as negative training examples). `job_views` stores Flask job-detail page views (implicit positive signal for future ranker). `run_log` now tracks `jobs_filtered` and `pre_screen_errors` counters. Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
+- **Database:** SQLite 3, WAL mode, path `db/jobs.db` (gitignored). Schema in `db/schema.sql`. 7 tables: `jobs`, `feedback`, `failed_extractions`, `run_log`, `source_suggestions`, `filtered_jobs`, `job_views`. `jobs` has a `content_hash TEXT` column (SHA-256 of normalized title+org for L2 cross-source dedup). `feedback` table has a `tags TEXT` column (JSON array of tag strings, nullable). `run_log` has a `source_yields TEXT` column (JSON dict mapping scraper name → jobs fetched per run). `source_suggestions` stores weekly field-intelligence org suggestions (status: `pending` | `skipped`). `filtered_jobs` stores jobs rejected by Layer 2 pre-screen (30-day TTL via `expires_at`; used as negative training examples). `job_views` stores Flask job-detail page views (implicit positive signal for future ranker). `run_log` tracks `jobs_filtered`, `pre_screen_errors`, and `source_yields` (JSON per-source counts). Full schema: [ARCHITECTURE.md](ARCHITECTURE.md#database).
 - **Web framework:** Flask 3.x, dev server only, `host="127.0.0.1"` — localhost only, not network-accessible.
 - **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password. Each job card includes a 1–10 rating row; pills link to the CF Worker `/feedback` route with a score param.
 - **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
@@ -224,7 +232,7 @@ The pipeline runs a cheap Claude Haiku pre-screen (Option B) before full LLM ext
 
 ## NEVER Rules
 
-1. **Never modify the scraping logic, selectors, or config of these working scrapers:** `euraxess.py`, `academictransfer.py`, `rand.py`, `case_poland.py`, `jrc.py`, `impactpool.py`, `busara.py`, `wodc.py`, `scp.py`, `trimbos.py` — unless the task explicitly targets them. They are the confirmed working sources.
+1. **Never modify the scraping logic, selectors, or config of these working scrapers:** `euraxess.py`, `academictransfer.py`, `rand.py`, `case_poland.py`, `jrc.py`, `impactpool.py`, `busara.py`, `wodc.py`, `scp.py`, `trimbos.py`, `fgv.py`, `epso_bluebook.py` — unless the task explicitly targets them. They are the confirmed working sources. (`dutch_universities.py` scrapers have provisional selectors and may be updated when portal audit results are available.)
 2. **Never use Ollama, OpenAI, or any LLM provider other than Anthropic.** All scoring calls go through `agents/extractor_scorer.py` with `instructor.from_anthropic()`.
 3. **Never add `anthropic.Anthropic()` instantiations outside `agents/extractor_scorer.py`.**
 4. **Never hardcode API keys, email credentials, model names, or score thresholds in source files.** Runtime values come from `.env`; model default is in `extractor_scorer.py` (not settings.yaml).

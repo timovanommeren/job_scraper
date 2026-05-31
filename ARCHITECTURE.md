@@ -85,6 +85,7 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── scrapers/bit.py                [DISABLED]
         ├── scrapers/fgv.py
         ├── scrapers/epso_bluebook.py
+        ├── scrapers/dutch_universities.py  (7 scrapers: uu, tilburg, eur, radboud, uva, vu, rug)
         │     └── (all scrapers import scrapers/base.py: RawJob, BaseScraper)
         │
         ├── agents/extractor_scorer.py  →  Anthropic API (claude-haiku-4-5-*)
@@ -127,16 +128,22 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
          │
          ▼
   ┌─ run_scrapers() ───────────────────────────────────────────┐
-  │  for each scraper in registry (17 scrapers):               │
+  │  for each scraper in registry (24 scrapers):               │
   │    scraper.fetch() → list[RawJob]                          │
   │    RawJob fields: title, url, source, raw_text,            │
-  │                   organization, location, deadline         │
+  │                   organization, location, deadline,        │
+  │                   content_type ('job' default)             │
+  │  returns (list[RawJob], source_yields dict)                │
   └────────────────────────────────────────────────────────────┘
          │ list[RawJob]  (~40–200 items typically)
          ▼
   ┌─ score_new_jobs() ─────────────────────────────────────────┐
   │  for each RawJob:                                          │
-  │    1. db/dedup.py:is_seen(url, conn) → 'scored'|'filtered'|'new'
+  │    1. db/dedup.py:is_seen(url, conn, title, org)          │
+  │         → 'scored'|'filtered'|'new'                       │
+  │       L1: url_hash exact match (O(1))                     │
+  │       L2: content_hash match on normalize(title+org)      │
+  │           (cross-source dedup; skipped if title absent)   │
   │       → 'scored':   update last_seen_at, skip             │
   │       → 'filtered': skip (TTL-based, expires after 30d)   │
   │       → 'new':      proceed to Layer 2                    │
@@ -175,7 +182,7 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
   db/dedup.py:log_run_finish()  →  run_log table
 ```
 
-**Where deduplication happens:** In `score_new_jobs()`, before any API call. `db/dedup.py:is_seen(url, conn)` returns `'scored'` (in `jobs` table), `'filtered'` (in non-expired `filtered_jobs`), or `'new'`. Only `'new'` jobs proceed. O(1) per check; happens before any Anthropic call.
+**Where deduplication happens:** In `score_new_jobs()`, before any API call. `db/dedup.py:is_seen(url, conn, title, org)` runs two checks: L1 — exact SHA-256(url) match against `jobs.url_hash`; L2 — SHA-256(normalize(title+org)) match against `jobs.content_hash` (cross-source dedup, only when title is provided). Returns `'scored'` (already in DB), `'filtered'` (in non-expired `filtered_jobs`), or `'new'`. Only `'new'` jobs proceed. O(1) per check; happens before any Anthropic call.
 
 **Where pre-screening happens:** After dedup, before full scoring. `agents/extractor_scorer.py:pre_screen()` sends title + 300 chars to Haiku with a yes/no domain-relevance prompt. Filtered jobs go to `filtered_jobs` table (30-day TTL). Fail-open: any exception passes the job through to full scoring (logged as `pre_screen_errors` in `run_log`).
 
@@ -191,11 +198,11 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
 
 1. `load_settings()` — reads `config/settings.yaml` into a dict
 2. `setup_logging()` — configures `RotatingFileHandler` → `logs/scraper.log` + `StreamHandler` → stdout
-3. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors` columns if missing
+3. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors`, `content_hash`, `source_yields` columns if missing
 4. `db.dedup.get_connection()` — opens SQLite connection with WAL mode and row_factory
 5. `agents.extractor_scorer.build_client()` — creates `instructor.from_anthropic(Anthropic(api_key=...))`
 6. `log_run_start(conn)` — inserts a row into `run_log` table, returns `run_id`
-7. `run_scrapers(settings)` — calls all 17 registered scrapers, aggregates `list[RawJob]`
+7. `run_scrapers(settings)` — calls all 24 registered scrapers, returns `(list[RawJob], source_yields dict)`
 8. `score_new_jobs(raw_jobs, conn, client)` — dedup + pre-screen + score + insert (see Data Flow above)
 9. `send_digest(new_postings, stats, conn)` — conditionally sends email
 10. `log_run_finish(...)` — updates `run_log` row with final stats and status
@@ -295,9 +302,10 @@ class RawJob:
     organization: Optional[str]
     location:     Optional[str]
     deadline:     Optional[str]   # raw string as found on page
+    content_type: str = "job"     # dispatch key for pre_screen(); future: "conference", "funding"
 ```
 
-### Registered Scrapers (17 total in main.py)
+### Registered Scrapers (24 total in main.py)
 
 | Source | Class | Method | Status |
 |---|---|---|---|
@@ -318,6 +326,13 @@ class RawJob:
 | `bit` | `BITScraper` | — | ❌ Disabled ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) |
 | `fgv` | `FGVScraper` | Playwright (`a[href^="/vaga/"]`) — portal.fgv.br rejects Python TLS | ✅ Active |
 | `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup — EU Commission Blue Book traineeship | ✅ Active (seasonal; applications open ~Mar and Oct) |
+| `uu` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site uu --test` |
+| `tilburg` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site tilburg --test` |
+| `eur` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site eur --test` |
+| `radboud` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site radboud --test` |
+| `uva` | `GenericPlaywrightUniversityScraper` | Playwright, config-driven | ⚠️ Provisional selectors — verify with `--site uva --test` |
+| `vu` | `GenericPlaywrightUniversityScraper` | Playwright, config-driven | ⚠️ Provisional selectors — verify with `--site vu --test` |
+| `rug` | `GenericPlaywrightUniversityScraper` | Playwright, config-driven | ⚠️ Provisional selectors — verify with `--site rug --test` |
 
 
 ### Retry policy
@@ -395,7 +410,8 @@ To migrate Layer 2 from Option B (Claude pre-screen) to Option C (embedding simi
 ```
 id                  INTEGER PK AUTOINCREMENT
 url                 TEXT UNIQUE              -- canonical URL
-url_hash            TEXT UNIQUE              -- SHA-256(url), indexed, used for dedup
+url_hash            TEXT UNIQUE              -- SHA-256(url), indexed, used for L1 dedup
+content_hash        TEXT                     -- SHA-256(normalize(title+org)), L2 cross-source dedup
 source              TEXT                     -- scraper name
 title               TEXT
 organization        TEXT
@@ -449,6 +465,7 @@ jobs_emailed        INTEGER
 api_errors          INTEGER    -- full-scoring API failures
 pre_screen_errors   INTEGER    -- pre_screen() exceptions (fail-open; non-zero = filter degraded)
 status              TEXT       -- success | partial | failed
+source_yields       TEXT       -- JSON dict: {"euraxess": 23, "uu": 0, ...} — per-source fetch counts
 ```
 
 **`filtered_jobs`** — jobs rejected by Layer 2 pre-screen before full scoring
@@ -491,7 +508,8 @@ Note: there is no `'added'` status. Adding a scraper is a manual code edit; the 
 
 ### Indexes
 ```sql
-idx_jobs_url_hash     ON jobs(url_hash)             -- O(1) dedup check
+idx_jobs_url_hash     ON jobs(url_hash)             -- O(1) L1 dedup check
+idx_jobs_content_hash ON jobs(content_hash)         -- O(1) L2 cross-source dedup
 idx_jobs_source       ON jobs(source)
 idx_jobs_emailed_at   ON jobs(emailed_at)
 idx_jobs_tier         ON jobs(relevance_tier)
@@ -751,10 +769,18 @@ job_scraper/
     ├── oecd.py                   # DISABLED — Cloudflare bot challenge
     ├── rand.py                   # RAND Corporation — Workday CXS JSON API (POST)
     ├── scp.py                    # SCP vacancies — werkenvoornederland.nl Bloomreach endpoint
+    ├── dutch_universities.py     # 7 Dutch university scrapers (uu, tilburg, eur, radboud, uva, vu, rug)
+    │                             #   PROVISIONAL selectors — run portal audit before trusting results.
+    │                             #   GenericStaticUniversityScraper (requests+BS4) + GenericPlaywrightUniversityScraper
+    │                             #   All driven by UNIVERSITY_SCRAPER_CONFIGS list; create_university_scrapers() builds registry entries
     ├── tni.py                    # TNI — requests; always returns 429 (IP-level block)
     ├── trimbos.py                # Trimbos-instituut — Playwright; JS-rendered SPA
     ├── uncareers.py              # DISABLED — CloudFront 403 block
     └── wodc.py                   # WODC vacancies — werkenvoornederland.nl Bloomreach endpoint
+
+tests/
+    ├── test_content_hash_dedup.py   # T3 tests: content_fingerprint() and L2 is_seen() path
+    └── test_dutch_universities.py   # T1 tests: GenericStaticUniversityScraper + create_university_scrapers() (mocked HTTP)
 ```
 
 ---
