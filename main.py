@@ -322,6 +322,21 @@ def main(
             "No network connectivity detected — aborting run (exit 1). "
             "If JobScraperDaily is configured with retry-on-failure, it will retry in 60 min."
         )
+        try:
+            from db.migrations import init_db
+            from db.dedup import get_connection, log_run_start, log_run_finish
+            init_db()
+            _conn = get_connection()
+            _run_id = log_run_start(_conn)
+            log_run_finish(
+                run_id=_run_id, sites_scraped=0, new_jobs_found=0,
+                jobs_scored=0, jobs_filtered=0, jobs_emailed=0,
+                api_errors=0, pre_screen_errors=0, status="no_network",
+                conn=_conn,
+            )
+            _conn.close()
+        except Exception:
+            logger.exception("Failed to write no_network run_log entry")
         sys.exit(1)
 
     from db.migrations import init_db
