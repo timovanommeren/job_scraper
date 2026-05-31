@@ -53,69 +53,70 @@ _HEADERS = {
 UNIVERSITY_SCRAPER_CONFIGS: list[dict] = [
     # ── Wave 1: static HTML ───────────────────────────────────────────────────
     {
-        # PROVISIONAL — verify selectors: python main.py --site uu --test
-        # Portal: uu.nl runs Drupal; job cards are typically <article> or .views-row.
-        # If 0 cards: open DevTools → Elements, find the repeating job card element,
-        # copy its selector and update card_selector.
+        # Verified 2026-05-31: uu.nl Drupal CMS. 24 li.overview-list__item found.
+        # Title and href both live on <a class="list-item__title"> inside each <li>.
         "source_name": "uu",
         "org_name": "Utrecht University",
         "tech": "static",
         "list_url": "https://www.uu.nl/en/organisation/working-at-utrecht-university/jobs",
         "filter_params": {},
         "location": "Utrecht, Nederland",
-        "card_selector": "article.views-row, li.views-row, .views-row, article",
-        "title_sel": "h3, h2, .field--name-title, .views-field-title",
-        "link_sel": "a",
-        "next_sel": "a[rel='next'], .pager__item--next a, li.next a",
+        "card_selector": "li.overview-list__item",
+        "title_sel": "a.list-item__title",
+        "link_sel": "a.list-item__title",
+        "next_sel": "a[rel='next'], .pager__item--next a",
     },
     {
-        # PROVISIONAL — verify selectors: python main.py --site tilburg --test
-        # Portal: tilburguniversity.edu uses Drupal/custom CMS.
+        # Verified 2026-05-31: Tilburg uses SAP SuccessFactors (fully JS-rendered).
+        # Requires clicking "Search Jobs" (pre_click) to load results.
+        # Job title links are <a href="...career_job_req_id=NNNN..."> — card IS the <a>,
+        # so title_sel is "" (use card's own text) and href comes from card.get_attribute("href").
         "source_name": "tilburg",
         "org_name": "Tilburg University",
-        "tech": "static",
-        "list_url": "https://www.tilburguniversity.edu/about/working/vacancies",
+        "tech": "playwright",
+        "list_url": "https://career5.successfactors.eu/career?company=S003974031P&lang=en_US",
         "filter_params": {},
         "location": "Tilburg, Nederland",
-        "card_selector": ".vacancy, article.node--type-vacancy, .views-row, article",
-        "title_sel": "h3, h2, .field--name-title",
-        "link_sel": "a",
-        "next_sel": "a[rel='next'], li.next a",
+        "pre_click": "input[type='submit'][value*='Search'], button:has-text('Search Jobs')",
+        "wait_selector": "a[href*='career_job_req_id']",
+        "card_selector": "a[href*='career_job_req_id']",
+        "title_sel": "",
     },
     {
-        # PROVISIONAL — verify selectors: python main.py --site eur --test
-        # Portal: eur.nl custom CMS. Try the PhD-specific URL if the overview is paginated.
+        # Verified 2026-05-31: eur.nl custom CMS. 10 div.teaser per page + pagination.
+        # Title and href both live on <a class="teaser__link"> inside each div.teaser.
+        # Pagination: li.pager__item--next a → ?page=N (relative, resolved via urljoin).
         "source_name": "eur",
         "org_name": "Erasmus University Rotterdam",
         "tech": "static",
         "list_url": "https://www.eur.nl/en/working-at-eur/vacancies/overview",
         "filter_params": {},
         "location": "Rotterdam, Nederland",
-        "card_selector": ".vacancy-item, article, .views-row, li.vacancy",
-        "title_sel": "h3, h2, .vacancy-title, .field--name-title",
-        "link_sel": "a",
-        "next_sel": "a[rel='next'], .pager-next a",
+        "card_selector": "div.teaser",
+        "title_sel": "a.teaser__link",
+        "link_sel": "a.teaser__link",
+        "next_sel": "li.pager__item--next a",
     },
     {
-        # PROVISIONAL — verify selectors: python main.py --site radboud --test
-        # Portal: ru.nl uses Pimcore-based CMS.
+        # Verified 2026-05-31: ru.nl Drupal CMS. 13 div.node--type-vacancy found.
+        # Title text from span.link__text; href from h2.card__title > a.
+        # No next-page link visible (all results on one page at audit time).
         "source_name": "radboud",
         "org_name": "Radboud University",
         "tech": "static",
         "list_url": "https://www.ru.nl/en/working-at/job-opportunities",
         "filter_params": {},
         "location": "Nijmegen, Nederland",
-        "card_selector": ".vacancy, .job-item, article, li.views-row, .views-row",
-        "title_sel": "h3, h2, .title, .field--name-title",
-        "link_sel": "a",
-        "next_sel": "a[rel='next'], .next-page a",
+        "card_selector": "div.node--type-vacancy",
+        "title_sel": "span.link__text",
+        "link_sel": "h2.card__title a",
+        "next_sel": "a[rel='next'], .pager__item--next a",
     },
     # ── Wave 2: Playwright (JS-rendered SPAs) ─────────────────────────────────
     {
-        # PROVISIONAL — check DevTools Network tab for a JSON API first.
-        # If werkenbij.uva.nl makes XHR requests to a /api/vacancies endpoint,
-        # implement UvA as a requests+JSON scraper (like rand.py) instead.
-        # Check: curl https://werkenbij.uva.nl/en/vacancies and look for data-* attrs.
+        # Verified 2026-05-31 via static fetch: werkenbij.uva.nl returns content
+        # via requests (not JS-gated). Keeping as Playwright for safety since the
+        # site structure wasn't fully confirmed. Selectors provisional.
         "source_name": "uva",
         "org_name": "University of Amsterdam",
         "tech": "playwright",
@@ -140,16 +141,20 @@ UNIVERSITY_SCRAPER_CONFIGS: list[dict] = [
         "title_sel": "h3, h2, [class*='title']",
     },
     {
-        # PROVISIONAL — werkenbij.rug.nl is a separate career portal, likely SPA.
+        # Verified 2026-05-31: werkenbij.rug.nl is WordPress with custom 'vacature' post type.
+        # Articles have no <a> tags — URLs are JS-only. link_via_click=True: click each card,
+        # capture page.url from the resulting navigation, go_back and repeat.
+        # English listing (/en/all-vacancies/) shows only international/research positions.
         "source_name": "rug",
         "org_name": "University of Groningen",
         "tech": "playwright",
         "list_url": "https://werkenbij.rug.nl/en/all-vacancies/",
         "filter_params": {},
         "location": "Groningen, Nederland",
-        "wait_selector": "article, [class*='vacancy'], [class*='job']",
-        "card_selector": "article, [class*='vacancy-item'], li[class*='job'], [class*='job-card']",
-        "title_sel": "h3, h2, [class*='title']",
+        "wait_selector": "article.vacature",
+        "card_selector": "article.vacature",
+        "title_sel": "h3.entry-title",
+        "link_via_click": True,
     },
 ]
 
@@ -288,9 +293,18 @@ class GenericPlaywrightUniversityScraper(PlaywrightBaseScraper):
         self._cfg = config
 
     async def _extract_jobs(self, page) -> list[RawJob]:
+        # Optional: click a button to trigger results (e.g. SuccessFactors "Search Jobs")
+        pre_click_sel = self._cfg.get("pre_click")
+        if pre_click_sel:
+            try:
+                btn = await page.wait_for_selector(pre_click_sel, timeout=12000)
+                await btn.click()
+            except Exception as e:
+                self.logger.warning(f"[{self.source_name}] pre_click {pre_click_sel!r} failed: {e}")
+
         wait_sel = self._cfg.get("wait_selector", "article")
         try:
-            await page.wait_for_selector(wait_sel, timeout=10000)
+            await page.wait_for_selector(wait_sel, timeout=12000)
         except Exception:
             self.logger.warning(
                 f"[{self.source_name}] Timed out waiting for {wait_sel!r}. "
@@ -310,35 +324,97 @@ class GenericPlaywrightUniversityScraper(PlaywrightBaseScraper):
         location = self._cfg.get("location")
         seen: set[str] = set()
 
-        for card in cards:
-            # Title
-            title_el = await card.query_selector(self._cfg["title_sel"])
-            if not title_el:
-                continue
-            title = (await title_el.inner_text()).strip()
-            if not title:
-                continue
+        link_via_click = self._cfg.get("link_via_click", False)
 
-            # URL — try card's own href, then first <a> child
-            href = await card.get_attribute("href") or ""
-            if not href:
-                a_el = await card.query_selector("a[href]")
-                href = await a_el.get_attribute("href") if a_el else ""
-            if not href or href in seen:
-                continue
-            seen.add(href)
+        if link_via_click:
+            # Portal has no <a> on cards — click each by index, capture URL, go back.
+            # Element handles become stale after navigation, so re-query per iteration.
+            card_count = len(cards)
+            for idx in range(card_count):
+                try:
+                    fresh_cards = await page.query_selector_all(self._cfg["card_selector"])
+                    if idx >= len(fresh_cards):
+                        break
+                    card = fresh_cards[idx]
 
-            full_url = href if href.startswith("http") else urljoin(self.base_url, href)
-            raw_text = (await card.inner_text()).strip()
+                    # Stop when pagination hides remaining cards (RUG hash-paging)
+                    if not await card.is_visible():
+                        break
 
-            jobs.append(RawJob(
-                title=title,
-                url=self.canonicalize_url(full_url),
-                source=self.source_name,
-                raw_text=raw_text[:4000],
-                organization=org,
-                location=location,
-            ))
+                    title_el = await card.query_selector(self._cfg["title_sel"])
+                    if not title_el:
+                        continue
+                    title = (await title_el.inner_text()).strip()
+                    if not title:
+                        continue
+                    raw_text = (await card.inner_text()).strip()
+
+                    async with page.expect_navigation(timeout=10000):
+                        await card.click(timeout=8000)
+                    full_url = self.canonicalize_url(page.url)
+                    if full_url in seen:
+                        await page.go_back(timeout=8000, wait_until="domcontentloaded")
+                        await page.wait_for_selector(self._cfg["card_selector"], timeout=8000)
+                        continue
+                    seen.add(full_url)
+
+                    detail_body = await page.query_selector("main, article, [class*='vacancy'], body")
+                    if detail_body:
+                        raw_text = (await detail_body.inner_text()).strip()
+
+                    await page.go_back(timeout=8000, wait_until="domcontentloaded")
+                    await page.wait_for_selector(self._cfg["card_selector"], timeout=8000)
+
+                    jobs.append(RawJob(
+                        title=title,
+                        url=full_url,
+                        source=self.source_name,
+                        raw_text=raw_text[:4000],
+                        organization=org,
+                        location=location,
+                    ))
+                except Exception as e:
+                    self.logger.warning(f"[{self.source_name}] click-navigate [{idx}] failed: {e}")
+                    try:
+                        if page.url != self.base_url:
+                            await page.go_back(timeout=6000, wait_until="domcontentloaded")
+                            await page.wait_for_selector(self._cfg["card_selector"], timeout=6000)
+                    except Exception:
+                        pass
+        else:
+            title_sel = self._cfg.get("title_sel", "")
+            for card in cards:
+                # Title — if title_sel is empty, card IS the title element (e.g. card is <a>)
+                if title_sel:
+                    title_el = await card.query_selector(title_sel)
+                    if not title_el:
+                        continue
+                    title = (await title_el.inner_text()).strip()
+                else:
+                    title = (await card.inner_text()).strip().split("\n")[0]
+                if not title:
+                    continue
+
+                raw_text = (await card.inner_text()).strip()
+
+                # URL — try card's own href (handles case where card IS an <a>), then child <a>
+                href = await card.get_attribute("href") or ""
+                if not href:
+                    a_el = await card.query_selector("a[href]")
+                    href = await a_el.get_attribute("href") if a_el else ""
+                if not href or href in seen:
+                    continue
+                seen.add(href)
+                full_url = href if href.startswith("http") else urljoin(self.base_url, href)
+
+                jobs.append(RawJob(
+                    title=title,
+                    url=self.canonicalize_url(full_url),
+                    source=self.source_name,
+                    raw_text=raw_text[:4000],
+                    organization=org,
+                    location=location,
+                ))
 
         self.logger.info(f"[{self.source_name}] {len(jobs)} vacancies found")
         return jobs

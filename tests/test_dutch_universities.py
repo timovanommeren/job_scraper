@@ -73,14 +73,16 @@ class TestCreateUniversityScrapers:
         assert set(registry.keys()) == expected
 
     def test_static_sources_are_correct_type(self):
+        # tilburg moved to playwright (SuccessFactors JS portal) — only uu, eur, radboud are static
         registry = create_university_scrapers(MINIMAL_SETTINGS)
-        for name in ("uu", "tilburg", "eur", "radboud"):
+        for name in ("uu", "eur", "radboud"):
             assert isinstance(registry[name], GenericStaticUniversityScraper), \
                 f"{name} should be GenericStaticUniversityScraper"
 
     def test_playwright_sources_are_correct_type(self):
+        # tilburg uses SuccessFactors (JS-rendered), so it's playwright alongside uva, vu, rug
         registry = create_university_scrapers(MINIMAL_SETTINGS)
-        for name in ("uva", "vu", "rug"):
+        for name in ("tilburg", "uva", "vu", "rug"):
             assert isinstance(registry[name], GenericPlaywrightUniversityScraper), \
                 f"{name} should be GenericPlaywrightUniversityScraper"
 
