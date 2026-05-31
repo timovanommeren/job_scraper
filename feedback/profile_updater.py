@@ -18,8 +18,12 @@ _PROFILE_PATH = Path(__file__).parent.parent / "config" / "profile.yaml"
 def _item_note(item: dict) -> str:
     """Build the annotation suffix for a few-shot example line."""
     parts = []
-    if item.get("tags"):
-        parts.append(f"[{', '.join(item['tags'])}]")
+    criteria = item.get("criteria")
+    if criteria:
+        formatted = ", ".join(f"{k}:{v}" for k, v in criteria.items())
+        parts.append(f"[criteria: {formatted}]")
+    elif item.get("tags"):
+        parts.append(f"[{', '.join(item['tags'])}]")   # backward compat for old items
     if item.get("comment"):
         parts.append(f'"{item["comment"]}"')
     return ("  ← " + " ".join(parts)) if parts else ""

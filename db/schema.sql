@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     relevance_score  INTEGER CHECK(relevance_score BETWEEN 1 AND 10),
     mismatch_reasons TEXT,           -- legacy column; superseded by tags (added via migrations.py). Kept for compat.
     comment          TEXT,           -- free-text, nullable
+    criteria         TEXT,           -- JSON: {"topic_fit":3,"methods_fit":5,"org_appeal":4,"career_fit":5,"location_fit":2}
     timestamp        DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

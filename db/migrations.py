@@ -32,6 +32,7 @@ def init_db() -> None:
         _safe_add_column(conn, "run_log", "pre_screen_errors", "INTEGER DEFAULT 0")
         _safe_add_column(conn, "jobs", "content_hash", "TEXT")        # L2 cross-source dedup
         _safe_add_column(conn, "run_log", "source_yields", "TEXT")   # JSON {source: job_count} per run
+        _safe_add_column(conn, "feedback", "criteria", "TEXT")      # JSON {topic_fit:3, methods_fit:5, ...}
         logger.info(f"Database initialised at {DB_PATH}")
         logger.info("Schema: source_suggestions table ensured")
     except Exception:

@@ -37,6 +37,7 @@ def add_feedback(
     action: str,        # "like", "pass", or "applied"
     comment: str = "",
     tags: list | None = None,
+    criteria: dict | None = None,
 ) -> None:
     """Upsert feedback for a job (replaces any existing entry for the same job_id)."""
     data = _load()
@@ -53,6 +54,8 @@ def add_feedback(
     }
     if tags:
         entry["tags"] = tags
+    if criteria:
+        entry["criteria"] = criteria
     data["items"].append(entry)
     _save(data)
 
