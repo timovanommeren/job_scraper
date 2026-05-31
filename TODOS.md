@@ -39,6 +39,20 @@ Some Dutch university PhD positions are posted directly on university sites and 
 
 ---
 
+## P2 — Known limitation: Haiku 4.5 prompt caching not available
+
+### Prompt caching blocked on Haiku 4.5 · (no issue — track here)
+
+**What:** `extract_and_score` already sends the system prompt in list-form with `cache_control: {"type": "ephemeral"}` (shipped 2026-05-31, commit `ef3228b`). The format is correct. Caching does not trigger.
+
+**Why blocked:** `claude-haiku-4-5-20251001` routes through `inference_geo='not_available'` — an infrastructure path that doesn't support prompt caching. Confirmed via `usage.cache_creation_input_tokens=0` even with prompts well above the 2048-token minimum. `claude-sonnet-4-6` confirmed working (`inference_geo='global'`, `ephemeral_5m_input_tokens` populated). Older Haiku models (3.5, 3) return 404 on this account.
+
+**When it unblocks:** When Haiku 4.5 gains caching support, `extract_and_score` will start saving ~52% on input token costs with zero further code changes. Check by running the one-liner: `python -c "from anthropic import Anthropic; c=Anthropic(); r=c.messages.create(model='claude-haiku-4-5-20251001',max_tokens=10,system=[{'type':'text','text':'x'*3000,'cache_control':{'type':'ephemeral'}}],messages=[{'role':'user','content':'hi'}]); print(r.usage.cache_creation_input_tokens)"` — non-zero means caching is live.
+
+**What's already in:** `pre_screen` max_tokens reduced 250→150 (saves ~145 output tokens per call, active now).
+
+---
+
 ## P1 — Blocked on conditions being met
 
 ### Option C migration: calibrate_threshold.py + embedding pre-filter · [#11](https://github.com/timovanommeren/job_scraper/issues/11)

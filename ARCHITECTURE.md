@@ -377,6 +377,8 @@ The scoring system prompt is loaded from `config/profile.yaml` (`system_prompt:`
 
 **System prompt augmentation:** Before every API call, `_get_full_system_prompt()` is called. This appends the output of `feedback/profile_updater.py:generate_prompt_additions()` — a block listing recent liked/passed jobs as few-shot calibration examples. This means **past feedback actively modifies future scoring** in real time.
 
+**Prompt caching:** `extract_and_score` sends the system prompt as a list-form content block with `cache_control: {"type": "ephemeral"}`. When caching is active this saves ~52% on input token costs within a run. As of 2026-05-31, `claude-haiku-4-5-20251001` does not support caching (`inference_geo='not_available'`); the format is correct and will activate automatically when the model gains support. `pre_screen` uses a ~20-token system prompt — too short to cache (minimum ~1,024 tokens).
+
 ### Pre-screen (Layer 2 field-check)
 
 `pre_screen(raw_job, client, content_type='job') -> tuple[bool, str]`
@@ -386,7 +388,7 @@ Cheap domain-relevance check that runs **before** full extraction. Sends title +
 - Returns `(True, reason)` → job proceeds to full scoring
 - Returns `(False, reason)` → job written to `filtered_jobs` and skipped
 - Returns `(True, 'pre_screen_error')` on any exception (fail-open) — logged as `pre_screen_errors` in `run_log`
-- `max_tokens=250` (instructor tool_use JSON wrapper requires ~70 token overhead; do not lower)
+- `max_tokens=150` (instructor tool_use JSON wrapper requires ~70 token overhead; actual output ~105 tokens total)
 
 To migrate Layer 2 from Option B (Claude pre-screen) to Option C (embedding similarity): replace only the function body of `pre_screen()`. The caller interface is unchanged. See `CLAUDE.md: Layer 2 Pre-filter: B→C Transition` for migration criteria.
 
