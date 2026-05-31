@@ -167,6 +167,56 @@ Full file dependency diagram: [ARCHITECTURE.md — File Dependency Diagram](ARCH
 
 ### Adding a new scraper
 
+**Step 0 — 5-minute pre-flight before writing any code.** Do this first; it determines the entire approach and prevents writing the wrong scraper type.
+
+```
+1. Check robots.txt → crawl-delay or disallowed paths?
+2. Recognise the ATS (see table below) — if it matches, the approach is already known.
+3. requests.get(list_url) → does the HTML contain job titles?
+   Yes → static scraper (requests + BS4). Playwright not needed.
+   No  → JS-rendered or requires interaction.
+4. GET /sitemap.xml → look for /{type}-sitemap.xml entries (e.g. /vacature-sitemap.xml).
+5. DevTools Network tab while page loads → any JSON XHR calls?
+   Yes → that endpoint is your API; skip HTML parsing entirely.
+   No  → Playwright.
+6. If Playwright: does the page show a count ("18 Jobs") but no titles?
+   Yes → a button/form interaction is required before results render (e.g. "Search Jobs").
+```
+
+**Known ATS platforms — recognise and use the right approach:**
+
+| ATS | How to recognise | Approach |
+|---|---|---|
+| Lever | URL contains `lever.co` or `jobs.lever.co` | GET `/v0/postings/{company}` JSON API — see `busara.py` |
+| Greenhouse | URL contains `greenhouse.io` or `boards.greenhouse.io` | GET `boards-api.greenhouse.io/v1/boards/{company}/jobs` JSON API |
+| Workday | URL contains `myworkdayjobs.com` | POST to the CXS search endpoint — see `rand.py` |
+| SAP SuccessFactors | URL contains `successfactors.eu/career?company=` | Playwright + `pre_click` to click "Search Jobs"; cards are `a[href*=career_job_req_id]` — see `dutch_universities.py:tilburg` |
+| Teamtailor | Subdomain like `careers.{org}.com` with Teamtailor branding | GET `{org}.teamtailor.com/api/v1/jobs` |
+| Bloomreach/WerkenbijNL | `werkenvoornederland.nl` component-rendering endpoint | GET with `_hn:type=component-rendering` param — see `wodc.py` |
+| WordPress (custom post type) | `wp-json/` in page source; custom post type in URL slug | Check `/wp-json/wp/v2/{post-type}` first; if 404, use click-navigate Playwright — see `dutch_universities.py:rug` |
+
+**Link extraction patterns — identify which applies before writing card selectors:**
+
+| Pattern | How to detect | Solution |
+|---|---|---|
+| Standard `<a href>` on card | `card.find('a')` returns link | Normal `link_sel` |
+| Card IS the `<a>` element | Card selector is `a[href*=...]` directly | `card.get_attribute("href")` works; set `title_sel=""` to use card's own text |
+| No `<a>` anywhere on card | No `<a>` found inside or on card element | Click-navigate: `page.expect_navigation` + `card.click()`, capture `page.url`; re-query cards by index after each go_back() — stale handles will fail |
+| REST API | JSON XHR in Network tab | Build a requests-based scraper against the API endpoint |
+
+**Common complications to check before testing:**
+
+- **Wrong URL** — always probe 2–3 URL variants before concluding a page doesn't exist. Check the site's own navigation links.
+- **Hash-based pagination** (`#page-2`) — breaks after `go_back()` (DOM nodes for later pages remain but become invisible). Use `is_visible()` check; stop iteration when False.
+- **Stale Playwright handles** — any element handle stored before a navigation is invalid after it. Always re-query by index (`query_selector_all(sel)[idx]`), never hold handles across navigations.
+- **CDN bot blocks** (Cloudflare, CloudFront) — not fixable at the scraping layer. Check if an aggregator already covers the source (e.g. Impactpool for UN jobs). Document as disabled with a GitHub issue.
+
+**These patterns apply equally to conferences and funding calls:**
+- Conference management: INDICO has a REST API; ConfTool requires scraping; OpenReview has an API.
+- Funding portals: EU Funding & Tenders Portal, NWO, UKRI all have JSON/RSS endpoints — check API docs before scraping HTML.
+
+**Implementation steps (after pre-flight):**
+
 1. Read `scrapers/base.py` — understand `BaseScraper` vs `PlaywrightBaseScraper` and the `RawJob` dataclass.
 2. Use `scrapers/euraxess.py` as a template for `requests`-based scrapers; `scrapers/trimbos.py` for Playwright.
 3. Subclass `BaseScraper` (or `PlaywrightBaseScraper` for JS-rendered pages). Set `source_name` and `base_url` as class attributes.
