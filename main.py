@@ -14,6 +14,7 @@ import argparse
 import logging
 import logging.handlers
 import os
+import socket
 import sys
 from datetime import date
 from pathlib import Path
@@ -48,6 +49,18 @@ def setup_logging(level: str = "INFO") -> None:
 
 
 logger = logging.getLogger(__name__)
+
+
+# ── Network check ───────────────────────────────────────────────────────────────
+
+def _check_network(host: str = "8.8.8.8", port: int = 53, timeout: int = 3) -> bool:
+    """Returns True if a TCP connection to host:port succeeds within timeout seconds."""
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+        return True
+    except OSError:
+        return False
 
 
 # ── Settings loader ─────────────────────────────────────────────────────────────
@@ -300,6 +313,16 @@ def main(
 ) -> None:
     settings = load_settings()
     setup_logging(settings.get("logging", {}).get("level", "INFO"))
+
+    # Skip the network check for single-site runs and one-shot modes — those are
+    # typically run manually and the operator can see the error immediately.
+    full_pipeline = not any([test_mode, dry_run, site, weekly_digest, backfill_deadlines, reprocess])
+    if full_pipeline and not _check_network():
+        logger.warning(
+            "No network connectivity detected — aborting run (exit 1). "
+            "If JobScraperDaily is configured with retry-on-failure, it will retry in 60 min."
+        )
+        sys.exit(1)
 
     from db.migrations import init_db
     from db.dedup import get_connection, log_run_start, log_run_finish
