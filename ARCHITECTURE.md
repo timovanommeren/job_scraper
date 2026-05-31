@@ -326,13 +326,13 @@ class RawJob:
 | `bit` | `BITScraper` | — | ❌ Disabled ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) |
 | `fgv` | `FGVScraper` | Playwright (`a[href^="/vaga/"]`) — portal.fgv.br rejects Python TLS | ✅ Active |
 | `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup — EU Commission Blue Book traineeship | ✅ Active (seasonal; applications open ~Mar and Oct) |
-| `uu` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site uu --test` |
-| `tilburg` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site tilburg --test` |
-| `eur` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site eur --test` |
-| `radboud` | `GenericStaticUniversityScraper` | requests + BS4, config-driven | ⚠️ Provisional selectors — verify with `--site radboud --test` |
-| `uva` | `GenericPlaywrightUniversityScraper` | Playwright, config-driven | ⚠️ Provisional selectors — verify with `--site uva --test` |
-| `vu` | `GenericPlaywrightUniversityScraper` | Playwright, config-driven | ⚠️ Provisional selectors — verify with `--site vu --test` |
-| `rug` | `GenericPlaywrightUniversityScraper` | Playwright, config-driven | ⚠️ Provisional selectors — verify with `--site rug --test` |
+| `uu` | `GenericStaticUniversityScraper` | requests + BS4; `li.overview-list__item` | ✅ Active (verified 2026-05-31; 24 jobs) |
+| `tilburg` | `GenericPlaywrightUniversityScraper` | Playwright; SAP SuccessFactors; pre_click "Search Jobs"; `a[href*=career_job_req_id]` | ✅ Active (verified 2026-05-31; 10–18 jobs) |
+| `eur` | `GenericStaticUniversityScraper` | requests + BS4; `div.teaser` + `li.pager__item--next a` pagination | ✅ Active (verified 2026-05-31; 24 jobs across 3 pages) |
+| `radboud` | `GenericStaticUniversityScraper` | requests + BS4; `div.node--type-vacancy` | ✅ Active (verified 2026-05-31; 13 jobs) |
+| `uva` | `GenericPlaywrightUniversityScraper` | Playwright; werkenbij.uva.nl | ✅ Active (10 jobs per run) |
+| `vu` | `GenericPlaywrightUniversityScraper` | Playwright; werkenbij.vu.nl | ✅ Active (10 jobs per run) |
+| `rug` | `GenericPlaywrightUniversityScraper` | Playwright; WordPress vacature posts with no `<a>` tags; click-navigate mode; visibility-stop at pagination boundary | ✅ Active (verified 2026-05-31; ~12 jobs from first page per run) |
 
 
 ### Retry policy

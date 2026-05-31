@@ -69,13 +69,13 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Trimbos-instituut | `scrapers/trimbos.py` | Playwright |
 | FGV | `scrapers/fgv.py` | Playwright (portal.fgv.br rejects Python TLS) |
 | EPSO Blue Book | `scrapers/epso_bluebook.py` | requests + BS4 |
-| Utrecht University | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
-| Tilburg University | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
-| Erasmus University Rotterdam | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
-| Radboud University | `scrapers/dutch_universities.py` | requests + BS4, config-driven (PROVISIONAL selectors) |
-| University of Amsterdam | `scrapers/dutch_universities.py` | Playwright, config-driven (PROVISIONAL selectors) |
-| Vrije Universiteit Amsterdam | `scrapers/dutch_universities.py` | Playwright, config-driven (PROVISIONAL selectors) |
-| University of Groningen | `scrapers/dutch_universities.py` | Playwright, config-driven (PROVISIONAL selectors) |
+| Utrecht University | `scrapers/dutch_universities.py` | requests + BS4, `li.overview-list__item` |
+| Tilburg University | `scrapers/dutch_universities.py` | Playwright, SAP SuccessFactors; pre_click "Search Jobs"; `a[href*=career_job_req_id]` |
+| Erasmus University Rotterdam | `scrapers/dutch_universities.py` | requests + BS4, `div.teaser` + pagination |
+| Radboud University | `scrapers/dutch_universities.py` | requests + BS4, `div.node--type-vacancy` |
+| University of Amsterdam | `scrapers/dutch_universities.py` | Playwright, werkenbij.uva.nl |
+| Vrije Universiteit Amsterdam | `scrapers/dutch_universities.py` | Playwright, werkenbij.vu.nl |
+| University of Groningen | `scrapers/dutch_universities.py` | Playwright, click-navigate (WordPress vacature, no `<a>` tags); returns ~12/run |
 
 ### Disabled Scrapers (return `[]` with a WARNING log — do not attempt to fix via code changes)
 
@@ -105,7 +105,8 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Dead function `get_unemailed_jobs()` | `db/dedup.py` | Defined but never called. Weekly digest queries DB directly in `gmail.py`. Safe to leave; don't repurpose without checking callers. |
 | Stale model name in `.env.example` | `.env.example` | Shows `claude-haiku-3-5-20251001`; actual default in `extractor_scorer.py` is `claude-haiku-4-5-20251001`. If someone copies `.env.example` verbatim, they get an outdated model name. |
 | Weekly digest doesn't deduplicate | `notifier/gmail.py:send_weekly_digest()` | A job emailed on Monday's daily digest will also appear in Tuesday's weekly digest. Intentional (weekly = retrospective), but non-obvious. |
-| Dutch university selectors are PROVISIONAL | `scrapers/dutch_universities.py` | All 7 university scrapers (uu, tilburg, eur, radboud, uva, vu, rug) have provisional CSS selectors. Watch `source_yields` in `run_log` — a persistent 0 means the selector needs updating, not that the uni has no open positions. Run `python main.py --site <name> --test` to verify. |
+| RUG only returns first-page cards (~12) | `scrapers/dutch_universities.py` | werkenbij.rug.nl uses hash-based pagination. After go_back() the later pages are invisible (hidden DOM nodes). The scraper stops at the first invisible card — only the most recently posted ~12 positions are captured per run. Subsequent pages require navigating through hash pagination which is not currently implemented. |
+| Tilburg returns Dutch admin roles too | `scrapers/dutch_universities.py` | SAP SuccessFactors at career5.successfactors.eu lists all 18 Tilburg positions including Dutch-only admin roles. Claude's pre-screen filters most out; only research/academic positions will score high enough to be relevant. |
 
 ---
 
@@ -232,7 +233,7 @@ The pipeline runs a cheap Claude Haiku pre-screen (Option B) before full LLM ext
 
 ## NEVER Rules
 
-1. **Never modify the scraping logic, selectors, or config of these working scrapers:** `euraxess.py`, `academictransfer.py`, `rand.py`, `case_poland.py`, `jrc.py`, `impactpool.py`, `busara.py`, `wodc.py`, `scp.py`, `trimbos.py`, `fgv.py`, `epso_bluebook.py` — unless the task explicitly targets them. They are the confirmed working sources. (`dutch_universities.py` scrapers have provisional selectors and may be updated when portal audit results are available.)
+1. **Never modify the scraping logic, selectors, or config of these working scrapers:** `euraxess.py`, `academictransfer.py`, `rand.py`, `case_poland.py`, `jrc.py`, `impactpool.py`, `busara.py`, `wodc.py`, `scp.py`, `trimbos.py`, `fgv.py`, `epso_bluebook.py`, and the 7 university scrapers in `dutch_universities.py` — unless the task explicitly targets them.
 2. **Never use Ollama, OpenAI, or any LLM provider other than Anthropic.** All scoring calls go through `agents/extractor_scorer.py` with `instructor.from_anthropic()`.
 3. **Never add `anthropic.Anthropic()` instantiations outside `agents/extractor_scorer.py`.**
 4. **Never hardcode API keys, email credentials, model names, or score thresholds in source files.** Runtime values come from `.env`; model default is in `extractor_scorer.py` (not settings.yaml).

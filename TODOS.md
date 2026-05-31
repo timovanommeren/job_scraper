@@ -35,7 +35,7 @@ Behavioural Insights Team — relevant org but 0 open positions at time of audit
 
 ### AcademicTransfer: not all Dutch PhDs included · [#8](https://github.com/timovanommeren/job_scraper/issues/8)
 
-Some Dutch university PhD positions are posted directly on university sites and not aggregated by AcademicTransfer. **Partially addressed (2026-05-31):** 7 Dutch university scrapers added in `scrapers/dutch_universities.py` (uu, tilburg, eur, radboud, uva, vu, rug) — all with PROVISIONAL CSS selectors. **Next steps:** run portal audit for each university (`python main.py --site <name> --test`), verify selectors produce results, update any that return 0 consistently. Check `source_yields` column in `run_log` after first production run.
+Some Dutch university PhD positions are posted directly on university sites and not aggregated by AcademicTransfer. **Resolved (2026-05-31):** 7 Dutch university scrapers added and portal-audited — all confirmed returning live jobs: uu (24), eur (24), radboud (13), tilburg (10–18), uva (10), vu (10), rug (~12). **Remaining limitation:** RUG only captures ~12 positions per run (first hash-pagination page); later pages are hidden after go_back() due to WordPress hash-paging. Lower-priority since RUG re-posts positions and the most recent ones are captured.
 
 ---
 
