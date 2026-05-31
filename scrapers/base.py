@@ -17,6 +17,7 @@ class RawJob:
     organization: Optional[str] = None
     location: Optional[str] = None
     deadline: Optional[str] = None  # raw string as found on page
+    content_type: str = "job"       # "job" | "funding_call" | "conference"
 
 
 class BaseScraper(ABC):

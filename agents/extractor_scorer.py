@@ -103,31 +103,50 @@ PRESCREEN_SYSTEM_PROMPT = (
     "You are a domain classifier. Answer only YES or NO, then one sentence of reasoning."
 )
 
+# Dispatch table: content_type -> classification question sent to the model.
+# The system prompt (PRESCREEN_SYSTEM_PROMPT) is shared across all types.
+# Add new entries here when funding_call / conference scrapers are built.
+_PRESCREEN_PROMPTS: dict[str, str] = {
+    "job": (
+        "Is this job in the domain of quantitative social/behavioural science, "
+        "public policy research methods, or public health?"
+    ),
+    "funding_call": (
+        "Is this funding call relevant to quantitative social/behavioural science research, "
+        "public policy methods, or public health? Answer True if it funds researchers "
+        "in these domains."
+    ),
+    "conference": (
+        "Is this conference or call for papers relevant to quantitative social/behavioural "
+        "science, public policy research methods, or public health?"
+    ),
+}
+
 
 class _PreScreenResult(BaseModel):
     relevant: bool = Field(
-        description="True if job is in the domain of quantitative social/behavioural science, "
-                    "public policy research methods, or public health. False otherwise."
+        description="True if the item matches the domain described in the question. False otherwise."
     )
     reason: str = Field(description="One sentence explaining the classification decision.")
 
 
 def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job") -> tuple[bool, str]:
     """
-    Cheap field-check before full LLM extraction.
-    Returns (True, reason) if job should proceed to scoring.
-    Returns (False, reason) if job should be filtered.
+    Cheap domain field-check before full LLM extraction.
+    Returns (True, reason) if the item should proceed to scoring.
+    Returns (False, reason) if it should be filtered.
     Fail-open: any exception returns (True, 'pre_screen_error').
 
-    content_type is a placeholder for future conference/funding_call dispatch (see R5 TODO).
+    content_type dispatches to the appropriate question in _PRESCREEN_PROMPTS.
+    Unknown types fall back to the 'job' prompt so new scrapers fail safe.
     """
     model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     max_chars = 300
+    question = _PRESCREEN_PROMPTS.get(content_type, _PRESCREEN_PROMPTS["job"])
     user_content = (
         f"Title: {raw_job.title}\n"
         f"Text: {(raw_job.raw_text or '')[:max_chars]}\n\n"
-        "Is this job in the domain of quantitative social/behavioural science, "
-        "public policy research methods, or public health?"
+        f"{question}"
     )
     try:
         result = client.chat.completions.create(
