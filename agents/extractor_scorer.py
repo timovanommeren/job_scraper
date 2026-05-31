@@ -151,7 +151,7 @@ def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job"
     try:
         result = client.chat.completions.create(
             model=model,
-            max_tokens=250,  # instructor uses tool_use JSON wrapper (~70 tokens overhead)
+            max_tokens=150,  # instructor uses tool_use JSON wrapper (~70 tokens overhead); actual output ~105 tokens
             messages=[{"role": "user", "content": user_content}],
             system=PRESCREEN_SYSTEM_PROMPT,
             response_model=_PreScreenResult,
@@ -218,7 +218,7 @@ Return as YYYY-MM-DD. If no deadline is found or it is ambiguous, return null.""
         model=model,
         max_tokens=600,
         messages=[{"role": "user", "content": user_content}],
-        system=_get_full_system_prompt(),
+        system=[{"type": "text", "text": _get_full_system_prompt(), "cache_control": {"type": "ephemeral"}}],
         response_model=JobPosting,
     )
     return posting
