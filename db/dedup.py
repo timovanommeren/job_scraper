@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import hashlib
 import json
@@ -22,10 +23,29 @@ def fingerprint(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
-def is_seen(url: str, conn: sqlite3.Connection) -> str:
+def content_fingerprint(title: str, org: str) -> str:
+    """SHA-256 of normalized title+org for cross-source dedup (L2).
+
+    Normalization: lowercase → replace punctuation with space → collapse whitespace.
+    "PhD Candidate - Methodology" and "PhD Candidate: Methodology" hash identically.
+    """
+    def _norm(s: str) -> str:
+        s = re.sub(r"[^a-z0-9]", " ", (s or "").lower())
+        return re.sub(r"\s+", " ", s).strip()
+    key = _norm(title) + "|" + _norm(org)
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def is_seen(url: str, conn: sqlite3.Connection,
+            title: str = "", org: str = "") -> str:
     """
     Returns 'scored' if URL is in jobs, 'filtered' if in non-expired filtered_jobs,
     or 'new' if unseen.
+
+    L1 — url_hash: exact URL match (existing behaviour, O(1)).
+    L2 — content_hash: cross-source dedup on normalize(title+org). Only checked
+         when title is provided; skips without raising if content_hash column is
+         absent (migration not yet run).
 
     WARNING: all three values are truthy strings. Call sites must use explicit
     string comparison — never `if is_seen():`.
@@ -33,6 +53,14 @@ def is_seen(url: str, conn: sqlite3.Connection) -> str:
     h = fingerprint(url)
     if conn.execute("SELECT 1 FROM jobs WHERE url_hash = ?", (h,)).fetchone():
         return "scored"
+    # L2: content_hash cross-source dedup
+    if title:
+        try:
+            ch = content_fingerprint(title, org)
+            if conn.execute("SELECT 1 FROM jobs WHERE content_hash = ?", (ch,)).fetchone():
+                return "scored"
+        except Exception:
+            pass  # column absent before migration — safe to skip
     row = conn.execute(
         "SELECT 1 FROM filtered_jobs WHERE url_hash = ? AND expires_at > strftime('%Y-%m-%d %H:%M:%S', 'now')",
         (h,),
@@ -57,14 +85,15 @@ def insert_job(raw, posting, conn: sqlite3.Connection) -> int:
     """Insert a newly processed job. Returns the new row id."""
     now = datetime.now(timezone.utc).isoformat()
     h = fingerprint(raw.url)
+    ch = content_fingerprint(posting.title or "", posting.organization or "")
     cur = conn.execute(
         """INSERT INTO jobs
-           (url, url_hash, source, title, organization, location, contract_type,
-            deadline, description_snippet, tags, relevance_score, relevance_tier,
-            relevance_reason, raw_text, first_seen_at, last_seen_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           (url, url_hash, content_hash, source, title, organization, location,
+            contract_type, deadline, description_snippet, tags, relevance_score,
+            relevance_tier, relevance_reason, raw_text, first_seen_at, last_seen_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
-            raw.url, h, raw.source,
+            raw.url, h, ch, raw.source,
             posting.title, posting.organization, posting.location, posting.contract_type,
             posting.deadline, posting.description_snippet,
             json.dumps(posting.tags),
@@ -180,16 +209,18 @@ def log_run_finish(
     pre_screen_errors: int,
     status: str,
     conn: sqlite3.Connection,
+    source_yields: dict | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """UPDATE run_log SET
            finished_at=?, sites_scraped=?, new_jobs_found=?,
            jobs_scored=?, jobs_filtered=?, jobs_emailed=?,
-           api_errors=?, pre_screen_errors=?, status=?
+           api_errors=?, pre_screen_errors=?, status=?, source_yields=?
            WHERE id=?""",
         (now, sites_scraped, new_jobs_found, jobs_scored, jobs_filtered,
-         jobs_emailed, api_errors, pre_screen_errors, status, run_id),
+         jobs_emailed, api_errors, pre_screen_errors, status,
+         json.dumps(source_yields or {}), run_id),
     )
     conn.commit()
 

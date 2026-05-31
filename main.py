@@ -104,19 +104,20 @@ def build_scraper_registry(settings: dict) -> dict:
 
 # ── Core pipeline functions ─────────────────────────────────────────────────────
 
-def run_scrapers(settings: dict, site_filter: str | None = None) -> list:
+def run_scrapers(settings: dict, site_filter: str | None = None) -> tuple[list, dict]:
     """
     Runs all scrapers (or a single one if site_filter is set).
-    Returns aggregated list of RawJob objects.
+    Returns (aggregated RawJob list, per-source yield counts).
     Logs per-site counts; never raises — failed scrapers return [].
     """
     registry = build_scraper_registry(settings)
     all_jobs = []
+    source_yields: dict[str, int] = {}
 
     if site_filter:
         if site_filter not in registry:
             logger.error(f"Unknown site: '{site_filter}'. Known sites: {list(registry)}")
-            return []
+            return [], {}
         sites = {site_filter: registry[site_filter]}
     else:
         sites = registry
@@ -126,10 +127,12 @@ def run_scrapers(settings: dict, site_filter: str | None = None) -> list:
             jobs = scraper.fetch()
             logger.info(f"{name}: fetched {len(jobs)} jobs")
             all_jobs.extend(jobs)
+            source_yields[name] = len(jobs)
         except Exception:
             logger.exception(f"{name}: unexpected top-level exception")
+            source_yields[name] = 0
 
-    return all_jobs
+    return all_jobs, source_yields
 
 
 def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple:
@@ -151,8 +154,8 @@ def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple
             logger.warning(f"Skipping job with empty URL (source={raw.source}, title={raw.title!r})")
             continue
 
-        # Dedup: explicit string comparison required — all return values are truthy strings.
-        status = is_seen(raw.url, conn)
+        # Dedup L1+L2: explicit string comparison required — all return values are truthy strings.
+        status = is_seen(raw.url, conn, title=raw.title or "", org=raw.organization or "")
         if status == "scored":
             update_last_seen(raw.url, conn)
             continue
@@ -324,6 +327,7 @@ def main(
     filtered_count = 0
     pre_screen_err = 0
     emailed_count = 0
+    source_yields: dict = {}
     status = "success"
 
     try:
@@ -343,7 +347,7 @@ def main(
         except Exception:
             logger.warning("[cf_sync] Startup sync failed — continuing without it")
 
-        raw_jobs = run_scrapers(settings, site_filter=site)
+        raw_jobs, source_yields = run_scrapers(settings, site_filter=site)
         sites_scraped = len(set(j.source for j in raw_jobs))
         logger.info(f"Total raw jobs fetched: {len(raw_jobs)} from {sites_scraped} sources")
 
@@ -387,6 +391,7 @@ def main(
             api_errors=api_errors,
             pre_screen_errors=pre_screen_err if "pre_screen_err" in dir() else 0,
             status=status,
+            source_yields=source_yields,
             conn=conn,
         )
         conn.close()
