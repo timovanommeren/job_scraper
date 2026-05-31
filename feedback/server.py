@@ -375,7 +375,7 @@ def job_detail(job_id: int):
 
     existing_fb_html = ""
     if fb:
-        fb_criteria = json.loads(fb["criteria"] or "{}") if fb.get("criteria") else {}
+        fb_criteria = json.loads(fb["criteria"] or "{}") if fb["criteria"] else {}
         fb_tags = json.loads(fb["tags"] or "[]") if fb["tags"] else []
         fb_score = fb["relevance_score"] or "—"
         if fb_criteria:
@@ -567,7 +567,7 @@ def feedback_list():
     if rows:
         trows = []
         for r in rows:
-            fb_criteria = json.loads(r["criteria"] or "{}") if r.get("criteria") else {}
+            fb_criteria = json.loads(r["criteria"] or "{}") if r["criteria"] else {}
             if fb_criteria:
                 row_tags = [f"{k.replace('_',' ')}:{v}" for k, v in fb_criteria.items()]
             else:
