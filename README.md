@@ -94,13 +94,6 @@ Every email digest includes a **1–10 rating row** per job (two rows of 5 numbe
 
 Your ratings feed back into the scoring system prompt in two ways: past feedback entries appear as few-shot calibration examples (with per-criterion scores for richer context), and organisations you've rated ≥ 8 twice or marked as applied get a persistent +1–2 point boost written to `config/profile.yaml`.
 
----
-
-## Known Limitations
-
-- **UN Careers, OECD** — blocked by CDN/Cloudflare. See issues [#2](https://github.com/timovanommeren/job_scraper/issues/2), [#3](https://github.com/timovanommeren/job_scraper/issues/3) for proposed workarounds (REST API, playwright-stealth).
-- **BIT** — disabled; see [#4](https://github.com/timovanommeren/job_scraper/issues/4).
-- **EU Careers** — returns 0 outside March/October intake windows. That's expected behaviour.
 
 ---
 
