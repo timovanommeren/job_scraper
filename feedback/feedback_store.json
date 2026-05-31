@@ -1,26 +1,6 @@
 {
   "items": [
     {
-      "job_id": "1",
-      "url": "https://euraxess.ec.europa.eu/jobs/440656",
-      "title": "Assistant Professor in the Department and Clinic of Nephrology, Transplantation and Internal Medicine",
-      "organization": "Medical University of Gdańsk",
-      "score_given": 8,
-      "action": "like",
-      "comment": "Test feedback submission",
-      "timestamp": "2026-05-28T16:25:42.472953+00:00"
-    },
-    {
-      "job_id": "42",
-      "url": "https://euraxess.ec.europa.eu/jobs/440604",
-      "title": "Doctoral Researcher - Materials Engineering",
-      "organization": "Universidade do Minho",
-      "score_given": 8,
-      "action": "like",
-      "comment": "",
-      "timestamp": "2026-05-29T17:49:28.435026+00:00"
-    },
-    {
       "job_id": "101",
       "url": "https://www.academictransfer.com/nl/jobs/361321/phd-candidate-teacherlab-at-the-research-centre-for-education-and-the-labour-market-roa",
       "title": "PhD Candidate TeacherLab at the Research Centre for Education and the Labour Market (ROA)",
@@ -39,6 +19,218 @@
       "action": "pass",
       "comment": "",
       "timestamp": "2026-05-29T18:45:59.368300+00:00"
+    },
+    {
+      "job_id": "29",
+      "url": "https://euraxess.ec.europa.eu/jobs/440621",
+      "title": "Doctoral Researcher in Psychology",
+      "organization": "Universidade do Minho",
+      "score_given": 4,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-29T21:06:16.588917+00:00"
+    },
+    {
+      "job_id": "116",
+      "url": "https://www.academictransfer.com/nl/jobs/361292/researcher-in-radiocarbon-based-chronological-modelling",
+      "title": "Researcher in Radiocarbon-Based Chronological Modelling",
+      "organization": "University of Groningen",
+      "score_given": 1,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-29T22:51:39.248107+00:00"
+    },
+    {
+      "job_id": "25",
+      "url": "https://euraxess.ec.europa.eu/jobs/440626",
+      "title": "Assistant Professor in Mathematics",
+      "organization": "University of Primorska",
+      "score_given": 1,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-29T22:51:39.273917+00:00"
+    },
+    {
+      "job_id": "45",
+      "url": "https://euraxess.ec.europa.eu/jobs/440603",
+      "title": "Early-Stage Researcher – PhD Student in Migration Studies (m/f/d)",
+      "organization": "University for Continuing Education Krems",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-29T22:51:39.299168+00:00"
+    },
+    {
+      "job_id": "63",
+      "url": "https://euraxess.ec.europa.eu/jobs/440578",
+      "title": "PhD position: Applying social science approaches to trust in science concept in sustainable construction",
+      "organization": "University of Primorska",
+      "score_given": 4,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-29T22:51:39.324790+00:00",
+      "tags": [
+        "Wrong location",
+        "Interesting topic",
+        "Good methods fit"
+      ]
+    },
+    {
+      "job_id": "42",
+      "url": "https://euraxess.ec.europa.eu/jobs/440604",
+      "title": "Doctoral Researcher - Materials Engineering",
+      "organization": "Universidade do Minho",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-30T12:16:08.722403+00:00"
+    },
+    {
+      "job_id": "1",
+      "url": "https://euraxess.ec.europa.eu/jobs/440656",
+      "title": "Assistant Professor in the Department and Clinic of Nephrology, Transplantation and Internal Medicine",
+      "organization": "Medical University of Gdańsk",
+      "score_given": 1,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-30T12:16:44.668898+00:00"
+    },
+    {
+      "job_id": "139",
+      "url": "https://euraxess.ec.europa.eu/jobs/441144",
+      "title": "Student Assistant(s) for Child Anxiety Treatment Projects",
+      "organization": "University of Amsterdam (UvA)",
+      "score_given": 5,
+      "action": "pass",
+      "comment": "This is a student assistantship. Soon I won't be a student anymore! So this doesn't apply.",
+      "timestamp": "2026-05-30T12:51:38.914788+00:00",
+      "tags": [
+        "Too senior/junior"
+      ]
+    },
+    {
+      "job_id": "239",
+      "url": "https://www.impactpool.org/jobs/1216737",
+      "title": "National Consultant for updating and finalization of research report \"Leaving No One Behind\"",
+      "organization": "UN Women - United Nations Entity for Gender Equality and the Empowerment of Women",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "Not at all my field of expertise (central asia) nor interests (women's rights)",
+      "timestamp": "2026-05-30T12:51:38.948442+00:00",
+      "tags": [
+        "Wrong field"
+      ]
+    },
+    {
+      "job_id": "251",
+      "url": "https://www.academictransfer.com/nl/jobs/361342/promovendus-verslaving-netwerk-geinformeerde-behandeling",
+      "title": "Promovendus Verslaving & Netwerk-geïnformeerde Behandeling",
+      "organization": "Erasmus Universiteit Rotterdam (EUR)",
+      "score_given": 9,
+      "action": "like",
+      "comment": "Super nice! I especially like that it is a \"collaborative phd\": there is a strong link with applied addiction workers. This a big pro for me. I am not entirely qualified for this position I think though. It states that a master in clinical psychology is wanted and clinical experience would be good too. Nonetheless, I might apply.",
+      "timestamp": "2026-05-30T12:51:38.989525+00:00",
+      "tags": [
+        "Interesting topic",
+        "Good methods fit",
+        "Policy relevance"
+      ]
+    },
+    {
+      "job_id": "268",
+      "url": "https://werkenbij.trimbos.nl/vacaturebeschrijving-regulier/projectassistent-mentale-gezondheid-en-preventie",
+      "title": "Projectassistent Mentale Gezondheid en Preventie",
+      "organization": "Trimbos-instituut",
+      "score_given": 6,
+      "action": "pass",
+      "comment": "The job is quite administrative. Not really what I am looking for in that sense.",
+      "timestamp": "2026-05-30T12:51:39.021144+00:00",
+      "tags": [
+        "Great org",
+        "Interesting topic",
+        "Too senior/junior"
+      ]
+    },
+    {
+      "job_id": "269",
+      "url": "https://werkenbij.trimbos.nl/vacaturebeschrijving-regulier/adviseur-gemeenten-alcohol-en-drugsbeleid",
+      "title": "Adviseur Gemeenten - Alcohol- en Drugsbeleid",
+      "organization": "Trimbos-instituut",
+      "score_given": 8,
+      "action": "like",
+      "comment": "Interesting topic. Sadly no real research element though. That would have been nice. More importantly, it requires 3-4 years working experience. I have more like 2-3. Will probably not apply but still cool!",
+      "timestamp": "2026-05-30T12:51:39.052788+00:00",
+      "tags": [
+        "Too senior/junior",
+        "Great org",
+        "Interesting topic",
+        "Policy relevance"
+      ]
+    },
+    {
+      "job_id": "287",
+      "url": "https://www.impactpool.org/jobs/1216779",
+      "title": "Stage en Politique Sociale",
+      "organization": "UNICEF - United Nations Children's Fund",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "Doesn't say anything about salary. Presumably it is unpaid. I am not looking for unpaid work.",
+      "timestamp": "2026-05-31T16:51:38.880428+00:00"
+    },
+    {
+      "job_id": "292",
+      "url": "https://www.uu.nl/en/organisation/working-at-utrecht-university/jobs/phd-on-advanced-statistical-and-ai-methods-for-multi-omic-integration",
+      "title": "PhD on Advanced Statistical and AI Methods for Multi-omic Integration",
+      "organization": "Utrecht University",
+      "score_given": 2,
+      "action": "pass",
+      "comment": "Too focused on biomedical sciences / AI combination",
+      "timestamp": "2026-05-31T16:51:38.935349+00:00",
+      "tags": [
+        "Wrong field"
+      ]
+    },
+    {
+      "job_id": "293",
+      "url": "https://www.uu.nl/en/organisation/working-at-utrecht-university/jobs/phd-position-pesticide-exposure-and-the-risk-of-parkinsons-disease",
+      "title": "PhD position — Pesticide exposure and the risk of Parkinson's disease",
+      "organization": "Utrecht University",
+      "score_given": 5,
+      "action": "pass",
+      "comment": "",
+      "timestamp": "2026-05-31T16:51:38.967171+00:00",
+      "tags": [
+        "Wrong field",
+        "Good methods fit"
+      ]
+    },
+    {
+      "job_id": "297",
+      "url": "https://www.uu.nl/en/organisation/working-at-utrecht-university/jobs/phd-position-in-human-data-interaction-for-health-and-wellbeing",
+      "title": "PhD Position in Human Data Interaction for Health and Wellbeing",
+      "organization": "Utrecht University",
+      "score_given": 6,
+      "action": "pass",
+      "comment": "Pro's: human-computer interactions, combination of quantitative and qualitative methods.\r\nCon's: it says \"Demonstrable interest (and preferably experience) in conducting research in the area of personal informatics systems.\" Which I don't have (neither experience nor interest).",
+      "timestamp": "2026-05-31T16:51:39.000534+00:00",
+      "tags": [
+        "Good methods fit",
+        "Interesting topic"
+      ]
+    },
+    {
+      "job_id": "300",
+      "url": "https://www.eur.nl/en/working-at-eur/vacancies/research-assistant-01-fte",
+      "title": "Research Assistant - Verbs and Eyewitness Testimony",
+      "organization": "Erasmus University Rotterdam (EUR)",
+      "score_given": 3,
+      "action": "pass",
+      "comment": "I think I am qualified but Verbs and Eyewitness Testimony is not my field of interest",
+      "timestamp": "2026-05-31T16:51:39.033552+00:00",
+      "tags": [
+        "Wrong field",
+        "Good methods fit"
+      ]
     }
   ]
 }

@@ -166,3 +166,13 @@ Data model is already in place (job_views LEFT JOIN). Needs UX design via /plan-
 Allow interesting positions to be saved in a "read later" box in the Flask UI.
 
 **Deferred from:** 2026-05-30 (created as GitHub issue)
+
+### Weighted criteria scoring · (deferred, no issue yet)
+
+**What:** After accumulating 300+ feedback entries with criterion scores, run a correlation analysis to determine which of the 5 criteria (topic_fit, methods_fit, org_appeal, career_fit, location_fit) best predicts the final `relevance_score`. Add weights to the `round(avg(criteria) × 2)` formula accordingly.
+
+**Why:** The current equal-weight formula (`round(avg(criteria) × 2)`) is arbitrary — all 5 criteria count equally. In practice, topic_fit likely dominates (wrong field = hard pass regardless of other dimensions). Weighted scoring would produce more accurate auto-computed scores.
+
+**How to apply:** Run `scripts/analyze_criteria_weights.py` (to be written) against `db/jobs.db` to correlate each criterion against final `relevance_score`. Use ridge regression or simple Pearson correlation. Write weights to `config/settings.yaml:criteria_weights`. Update `submit_feedback()` formula.
+
+**Deferred from:** 2026-05-31 (feedback form redesign). Trigger condition: 300+ labeled jobs (same threshold as Option C embedding pre-screening migration).
