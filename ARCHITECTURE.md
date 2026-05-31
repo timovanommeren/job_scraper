@@ -198,14 +198,15 @@ feedback/cf_sync.py  (Task Scheduler → every hour)
 
 1. `load_settings()` — reads `config/settings.yaml` into a dict
 2. `setup_logging()` — configures `RotatingFileHandler` → `logs/scraper.log` + `StreamHandler` → stdout
-3. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors`, `content_hash`, `source_yields` columns if missing
-4. `db.dedup.get_connection()` — opens SQLite connection with WAL mode and row_factory
-5. `agents.extractor_scorer.build_client()` — creates `instructor.from_anthropic(Anthropic(api_key=...))`
-6. `log_run_start(conn)` — inserts a row into `run_log` table, returns `run_id`
-7. `run_scrapers(settings)` — calls all 24 registered scrapers, returns `(list[RawJob], source_yields dict)`
-8. `score_new_jobs(raw_jobs, conn, client)` — dedup + pre-screen + score + insert (see Data Flow above)
-9. `send_digest(new_postings, stats, conn)` — conditionally sends email
-10. `log_run_finish(...)` — updates `run_log` row with final stats and status
+3. `_check_network()` — TCP probe to `8.8.8.8:53` (3 s timeout); if offline, writes a `run_log` row with `status='no_network'` and exits with code 1 (skipped for `--test`, `--dry-run`, `--site`, `--weekly-digest`, `--backfill-deadlines`, `--reprocess`)
+4. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors`, `content_hash`, `source_yields` columns if missing
+5. `db.dedup.get_connection()` — opens SQLite connection with WAL mode and row_factory
+6. `agents.extractor_scorer.build_client()` — creates `instructor.from_anthropic(Anthropic(api_key=...))`
+7. `log_run_start(conn)` — inserts a row into `run_log` table, returns `run_id`
+8. `run_scrapers(settings)` — calls all 24 registered scrapers, returns `(list[RawJob], source_yields dict)`
+9. `score_new_jobs(raw_jobs, conn, client)` — dedup + pre-screen + score + insert (see Data Flow above)
+10. `send_digest(new_postings, stats, conn)` — conditionally sends email
+11. `log_run_finish(...)` — updates `run_log` row with final stats and status
 
 ---
 
@@ -467,7 +468,7 @@ jobs_filtered       INTEGER    -- rejected by Layer 2 pre-screen
 jobs_emailed        INTEGER
 api_errors          INTEGER    -- full-scoring API failures
 pre_screen_errors   INTEGER    -- pre_screen() exceptions (fail-open; non-zero = filter degraded)
-status              TEXT       -- success | partial | failed
+status              TEXT       -- success | partial | failed | no_network
 source_yields       TEXT       -- JSON dict: {"euraxess": 23, "uu": 0, ...} — per-source fetch counts
 ```
 
