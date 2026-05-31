@@ -63,6 +63,53 @@ class TestAddFeedback:
         assert items[0]["action"] == "applied"
 
 
+class TestCriteriaStorage:
+
+    def test_stores_entry_with_criteria(self, tmp_store):
+        from feedback.store import add_feedback, get_all
+        criteria = {"topic_fit": 4, "methods_fit": 5, "org_appeal": 3, "career_fit": 5, "location_fit": 4}
+        add_feedback("10", "https://example.com/10", "Job X", "Org X", 8, "like",
+                     criteria=criteria)
+        items = get_all()
+        assert items[0]["criteria"] == criteria
+
+    def test_criteria_omitted_when_none(self, tmp_store):
+        from feedback.store import add_feedback, get_all
+        add_feedback("11", "https://example.com/11", "Job Y", "Org Y", 6, "pass")
+        items = get_all()
+        assert "criteria" not in items[0]
+
+    def test_backward_compat_old_entry_has_no_criteria(self, tmp_store):
+        """Old entries with only tags are readable alongside new criteria entries."""
+        import json
+        from feedback.store import add_feedback, get_all
+        # Simulate a legacy entry by writing directly to the store
+        import feedback.store as store_mod
+        legacy = {
+            "job_id": "99",
+            "url": "https://example.com/99",
+            "title": "Old Job",
+            "organization": "Old Org",
+            "score_given": 3,
+            "action": "pass",
+            "comment": "",
+            "timestamp": "2026-05-01T00:00:00+00:00",
+            "tags": ["Wrong field"],
+        }
+        data = {"items": [legacy]}
+        store_mod._save(data)
+        # Add a new entry with criteria
+        add_feedback("100", "https://example.com/100", "New Job", "New Org", 8, "like",
+                     criteria={"topic_fit": 4, "methods_fit": 5, "org_appeal": 4,
+                                "career_fit": 5, "location_fit": 3})
+        items = get_all()
+        old = next(i for i in items if i["job_id"] == "99")
+        new = next(i for i in items if i["job_id"] == "100")
+        assert old.get("tags") == ["Wrong field"]
+        assert "criteria" not in old
+        assert new.get("criteria") is not None
+
+
 class TestGetFeedbackSummary:
 
     def test_summary_includes_applied(self, tmp_store):

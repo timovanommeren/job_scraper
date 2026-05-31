@@ -167,3 +167,56 @@ class TestUpdateLikedOrganizations:
 
         profile = yaml.safe_load(profile_file.read_text(encoding="utf-8"))
         assert "liked_organizations" not in profile
+
+
+def _make_item_with_criteria(job_id, org, score, action="like", criteria=None, comment=""):
+    entry = {"job_id": job_id, "organization": org, "score_given": score,
+             "action": action, "comment": comment, "title": "Test Job",
+             "url": f"https://example.com/{job_id}"}
+    if criteria:
+        entry["criteria"] = criteria
+    return entry
+
+
+class TestItemNote:
+
+    def _call(self, item):
+        from feedback.profile_updater import _item_note
+        return _item_note(item)
+
+    def test_formats_criteria_dict(self):
+        """criteria dict → '[criteria: topic_fit:4, ...]' in annotation."""
+        item = _make_item_with_criteria(
+            "1", "RAND", 8,
+            criteria={"topic_fit": 4, "methods_fit": 5, "org_appeal": 3,
+                      "career_fit": 5, "location_fit": 4},
+        )
+        result = self._call(item)
+        assert "[criteria:" in result
+        assert "topic_fit:4" in result
+        assert "methods_fit:5" in result
+
+    def test_falls_back_to_tags_for_old_items(self):
+        """Old items with tags but no criteria use the tag format."""
+        item = _make_item("1", "RAND", 3, tags=["Wrong field", "Too quantitative"])
+        result = self._call(item)
+        assert "Wrong field" in result
+        assert "[criteria:" not in result
+
+    def test_includes_comment(self):
+        """Comment appears in annotation for both criteria and tag items."""
+        item = _make_item_with_criteria(
+            "1", "RAND", 8, comment="Great policy relevance",
+            criteria={"topic_fit": 4, "methods_fit": 4, "org_appeal": 5,
+                      "career_fit": 4, "location_fit": 5},
+        )
+        result = self._call(item)
+        assert "Great policy relevance" in result
+
+    def test_empty_item_returns_empty_string(self):
+        """Item with no criteria, tags, or comment → empty string."""
+        item = {"job_id": "1", "organization": "X", "score_given": 5,
+                "action": "pass", "comment": "", "title": "T",
+                "url": "https://example.com/1"}
+        result = self._call(item)
+        assert result == ""

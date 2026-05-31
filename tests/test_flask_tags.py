@@ -1,5 +1,5 @@
 """
-Tests for structured tag form submit and feedback banner in feedback/server.py.
+Tests for the criteria slider feedback form in feedback/server.py.
 
 Run: python -m pytest tests/test_flask_tags.py -v
 """
@@ -28,7 +28,8 @@ def _make_test_db(db_path: Path) -> None:
     con.execute("""CREATE TABLE feedback (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT,
         relevance_score INTEGER, tags TEXT, comment TEXT,
-        mismatch_reasons TEXT, timestamp TEXT DEFAULT (datetime('now'))
+        mismatch_reasons TEXT, criteria TEXT,
+        timestamp TEXT DEFAULT (datetime('now'))
     )""")
     con.execute(
         "INSERT INTO jobs VALUES (1,'https://ex.com/1','Test PhD','RAND','Brussels',"
@@ -63,14 +64,17 @@ def client(tmp_path):
                     yield srv.app.test_client(), db_path
 
 
-class TestTagFormSubmit:
+class TestCriteriaFormSubmit:
 
     def test_submit_redirects_to_feedback_saved(self, client):
         """POST /jobs/1/feedback returns 302 to /jobs?feedback=saved."""
         tc, _ = client
         resp = tc.post("/jobs/1/feedback", data={
-            "relevance_score": "8",
-            "tags": ["Great org", "Policy relevance"],
+            "criteria_topic_fit": "4",
+            "criteria_methods_fit": "4",
+            "criteria_org_appeal": "5",
+            "criteria_career_fit": "4",
+            "criteria_location_fit": "4",
             "comment": "Looks great",
         })
         assert resp.status_code == 302
@@ -84,77 +88,140 @@ class TestTagFormSubmit:
         assert resp.status_code == 200
         assert b"Feedback saved" in resp.data
 
-    def test_submit_without_tags_succeeds(self, client):
-        """POST without any tags field still completes without error."""
+    def test_submit_defaults_succeeds(self, client):
+        """POST with no criteria fields completes without error (defaults to 3)."""
         tc, _ = client
-        resp = tc.post("/jobs/1/feedback", data={
-            "relevance_score": "5",
-            "comment": "OK job",
-        })
+        resp = tc.post("/jobs/1/feedback", data={"comment": "OK job"})
         assert resp.status_code == 302
 
-    def test_invalid_tags_are_filtered(self, client):
-        """Tags not in ALLOWED_TAGS are dropped; valid tags are kept."""
-        tc, db_path = client
-
-        import feedback.server as srv
-
-        captured_tags = {}
-
-        def capture_sqlite(job_id, relevance_score, tags, comment):
-            captured_tags["tags"] = tags
-
-        with patch.object(srv, "_write_feedback_sqlite", side_effect=capture_sqlite):
-            tc.post("/jobs/1/feedback", data={
-                "relevance_score": "7",
-                "tags": ["Wrong field", "INVALID_TAG_XYZ"],
-            })
-
-        assert captured_tags.get("tags") == ["Wrong field"]
-
-    def test_tags_stored_via_write_feedback_sqlite(self, client):
-        """Selected tags reach _write_feedback_sqlite as a list."""
+    def test_criteria_stored_via_write_feedback_sqlite(self, client):
+        """Criterion slider values reach _write_feedback_sqlite as a dict."""
         tc, _ = client
 
         import feedback.server as srv
 
         stored = {}
 
-        def capture(job_id, relevance_score, tags, comment):
-            stored["tags"] = tags
+        def capture(job_id, relevance_score, tags, comment, criteria=None):
+            stored["criteria"] = criteria
+            stored["score"] = relevance_score
 
         with patch.object(srv, "_write_feedback_sqlite", side_effect=capture):
             tc.post("/jobs/1/feedback", data={
-                "relevance_score": "9",
-                "tags": ["Great org", "Interesting topic"],
+                "criteria_topic_fit": "5",
+                "criteria_methods_fit": "5",
+                "criteria_org_appeal": "5",
+                "criteria_career_fit": "5",
+                "criteria_location_fit": "5",
             })
 
-        assert set(stored.get("tags", [])) == {"Great org", "Interesting topic"}
+        assert stored.get("criteria") == {
+            "topic_fit": 5, "methods_fit": 5, "org_appeal": 5,
+            "career_fit": 5, "location_fit": 5,
+        }
+        assert stored.get("score") == 10  # avg 5 × 2 = 10
 
-    def test_applied_button_sets_action_applied(self, client):
-        """POST with action_override=applied calls add_feedback with action='applied'."""
+    def test_criteria_reach_json_store(self, client):
+        """Criteria dict flows from submit handler through to _write_feedback_json."""
         tc, _ = client
 
         import feedback.server as srv
 
-        captured_action = {}
+        captured = {}
 
-        def capture_json(job_id, url, title, org, score, action, comment, tags=None):
-            captured_action["action"] = action
+        def capture_json(job_id, url, title, org, score, action, comment,
+                         tags=None, criteria=None):
+            captured["criteria"] = criteria
+            captured["score"] = score
 
         with patch.object(srv, "_write_feedback_json", side_effect=capture_json):
             with patch.object(srv, "_write_feedback_sqlite"):
                 tc.post("/jobs/1/feedback", data={
-                    "relevance_score": "10",
+                    "criteria_topic_fit": "4",
+                    "criteria_methods_fit": "3",
+                    "criteria_org_appeal": "4",
+                    "criteria_career_fit": "5",
+                    "criteria_location_fit": "4",
+                })
+
+        assert captured.get("criteria") == {
+            "topic_fit": 4, "methods_fit": 3, "org_appeal": 4,
+            "career_fit": 5, "location_fit": 4,
+        }
+        # avg(4,3,4,5,4) = 4.0; round(4.0 × 2) = 8
+        assert captured.get("score") == 8
+
+    def test_score_derived_from_criteria_average(self, client):
+        """relevance_score = round(avg(criteria) × 2); all-3 → 6."""
+        tc, _ = client
+
+        import feedback.server as srv
+
+        stored_score = {}
+
+        def capture(job_id, relevance_score, tags, comment, criteria=None):
+            stored_score["score"] = relevance_score
+
+        with patch.object(srv, "_write_feedback_sqlite", side_effect=capture):
+            tc.post("/jobs/1/feedback", data={
+                "criteria_topic_fit": "3",
+                "criteria_methods_fit": "3",
+                "criteria_org_appeal": "3",
+                "criteria_career_fit": "3",
+                "criteria_location_fit": "3",
+            })
+
+        assert stored_score.get("score") == 6  # avg 3 × 2 = 6
+
+    def test_criteria_values_clamped_to_1_5(self, client):
+        """Values outside 1-5 are clamped before storage."""
+        tc, _ = client
+
+        import feedback.server as srv
+
+        stored = {}
+
+        def capture(job_id, relevance_score, tags, comment, criteria=None):
+            stored["criteria"] = criteria
+
+        with patch.object(srv, "_write_feedback_sqlite", side_effect=capture):
+            tc.post("/jobs/1/feedback", data={
+                "criteria_topic_fit": "0",    # below min → 1
+                "criteria_methods_fit": "6",  # above max → 5
+                "criteria_org_appeal": "3",
+                "criteria_career_fit": "3",
+                "criteria_location_fit": "3",
+            })
+
+        assert stored["criteria"]["topic_fit"] == 1
+        assert stored["criteria"]["methods_fit"] == 5
+
+    def test_applied_button_sets_action_applied(self, client):
+        """POST with action_override=applied calls add_feedback with action='applied' and score=10."""
+        tc, _ = client
+
+        import feedback.server as srv
+
+        captured = {}
+
+        def capture_json(job_id, url, title, org, score, action, comment,
+                         tags=None, criteria=None):
+            captured["action"] = action
+            captured["score"] = score
+
+        with patch.object(srv, "_write_feedback_json", side_effect=capture_json):
+            with patch.object(srv, "_write_feedback_sqlite"):
+                tc.post("/jobs/1/feedback", data={
                     "action_override": "applied",
                 })
 
-        assert captured_action.get("action") == "applied"
+        assert captured.get("action") == "applied"
+        assert captured.get("score") == 10
 
     def test_job_not_found_returns_404(self, client):
         """POST to a non-existent job ID returns 404."""
         tc, _ = client
-        resp = tc.post("/jobs/9999/feedback", data={"relevance_score": "5"})
+        resp = tc.post("/jobs/9999/feedback", data={})
         assert resp.status_code == 404
 
     def test_calibration_footer_shown_when_no_feedback(self, client):
