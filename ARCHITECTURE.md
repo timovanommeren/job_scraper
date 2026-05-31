@@ -375,7 +375,7 @@ class JobPosting(BaseModel):
 
 The scoring system prompt is loaded from `config/profile.yaml` (`system_prompt:` key). If the file is missing or unreadable, the code falls back to the embedded `_FALLBACK_SYSTEM_PROMPT` string in `extractor_scorer.py`. The `profile.yaml` version is **more detailed** — it includes hard disqualifiers (postdoc = max score 2), strong penalties (senior roles, climate focus), and bonus categories. Always edit `profile.yaml`, not the embedded fallback.
 
-**System prompt augmentation:** Before every API call, `_get_full_system_prompt()` is called. This appends the output of `feedback/profile_updater.py:generate_prompt_additions()` — a block listing recent liked/passed jobs as few-shot calibration examples. This means **past feedback actively modifies future scoring** in real time.
+**System prompt augmentation:** Before every API call, `_get_full_system_prompt()` is called. This appends the output of `feedback/profile_updater.py:generate_prompt_additions()` — a block listing recent feedback entries as few-shot calibration examples, each with per-criterion scores (`topic_fit`, `methods_fit`, `org_appeal`, `career_fit`, `location_fit`) serialised by `_item_note()`. This means **past feedback actively modifies future scoring** in real time.
 
 **Prompt caching:** `extract_and_score` sends the system prompt as a list-form content block with `cache_control: {"type": "ephemeral"}`. When caching is active this saves ~52% on input token costs within a run. As of 2026-05-31, `claude-haiku-4-5-20251001` does not support caching (`inference_geo='not_available'`); the format is correct and will activate automatically when the model gains support. `pre_screen` uses a ~20-token system prompt — too short to cache (minimum ~1,024 tokens).
 
@@ -438,8 +438,9 @@ id               INTEGER PK
 job_id           TEXT                    -- foreign key to jobs.id (as string)
 relevance_score  INTEGER (1–10)          -- user's rating (not Claude's)
 mismatch_reasons TEXT                    -- legacy column (unused, kept for compat)
-tags             TEXT                    -- JSON array of tag strings (see PASS_TAGS/LIKE_TAGS in server.py)
+tags             TEXT                    -- JSON array of tag strings (legacy; new submissions omit this)
 comment          TEXT
+criteria         TEXT                    -- JSON dict of 5 per-dimension scores: {"topic_fit":3,"methods_fit":5,"org_appeal":4,"career_fit":5,"location_fit":2}
 timestamp        DATETIME
 ```
 
@@ -548,7 +549,7 @@ The `JobScraperFeedbackServer` Windows Task Scheduler task runs `pythonw.exe fee
 |---|---|---|
 | `GET` | `/` | Redirect to `/jobs` |
 | `GET` | `/jobs` | Paginated job list; accepts `?tier=strong_match\|maybe\|not_relevant\|all` and `?page=N` |
-| `GET` | `/jobs/<id>` | Job detail page with score/tags/snippet + feedback form (slider + checkboxes) |
+| `GET` | `/jobs/<id>` | Job detail page with score/tags/snippet + feedback form (overall slider + 5 criterion sliders) |
 | `POST` | `/jobs/<id>/feedback` | Submit feedback; writes to both SQLite `feedback` table and `feedback_store.json` |
 | `GET` | `/feedback` | Paginated history of all submitted feedback |
 | `GET` | `/fb` | Email button compat: `?id=N` → redirect to `/jobs/N` |
@@ -637,9 +638,10 @@ If `_smtp_send()` raises, `save_fallback_html()` writes the full digest HTML to 
 **Applied button:** After initial feedback is submitted, an "✅ Applied" button appears in the job detail view. Clicking it re-POSTs with `action_override=applied`, recording `action='applied'` regardless of slider score. `action='applied'` is treated as the strongest signal (equivalent to score 10) in `update_liked_organizations()`.
 
 ### What the form captures
-- **Relevance slider** (1–10): user's own score, independent of Claude's score
-- **Structured tags** (pill-toggle, multi-select): predefined vocabulary split into "Why pass?" (Wrong field, Too senior/junior, Wrong location, Postdoc, Too quantitative, Too qualitative) and "Why like?" (Great org, Interesting topic, Good methods fit, Paid traineeship, Policy relevance). Tags are stored as a JSON array in both SQLite (`feedback.tags`) and `feedback_store.json`.
+- **Relevance slider** (1–10): user's own score, independent of Claude's score. Auto-populated as `round(avg(criteria) × 2)` when criterion sliders are set.
+- **5 criterion sliders** (1–5 each): per-dimension scores stored as a JSON dict in `feedback.criteria`. Criteria: `topic_fit` (Topic relevance), `methods_fit` (Methods match), `org_appeal` (Organization appeal), `career_fit` (Career stage fit), `location_fit` (Location). Replaces the legacy tag-pill vocabulary as of 2026-05-31.
 - **Free-text comment**: notes or example jobs
+- **Legacy `tags` field**: kept in SQLite for backwards compatibility; new submissions omit it.
 
 ### Where feedback is stored (two parallel stores)
 
@@ -663,15 +665,15 @@ Both are written on every feedback submission. They are separate and can theoret
    USER FEEDBACK (calibrate scores based on these past reactions):
    ══════════════════════════════
    JOBS USER LIKED — scored too low; boost similar roles:
-     ✅ [9/10] Research Analyst @ WODC
+     ✅ [9/10] Research Analyst @ WODC [criteria: topic_fit:5, methods_fit:4, org_appeal:5, career_fit:5, location_fit:4]
    JOBS USER PASSED ON — scored too high; reduce similar roles:
-     ❌ [3/10] Senior Manager @ Climate NGO ← "too senior, wrong field"
+     ❌ [3/10] Senior Manager @ Climate NGO [criteria: topic_fit:1, methods_fit:3, org_appeal:2, career_fit:4, location_fit:3]
    ```
 5. This text is appended to the base system prompt before every Claude API call
 
 So feedback given today affects tomorrow's run's scores. The more feedback you give, the better-calibrated the scoring becomes.
 
-**Structured tags in prompts:** When a feedback item has tags, `_item_note()` appends them to the few-shot line: `"Passed (score 2): Labour market focus [Wrong field, Too quantitative]"`. This gives Claude richer signal than a score alone.
+**Criteria in prompts:** `_item_note()` appends per-criterion scores to each few-shot line when present: `"Passed (score 2): Labour market focus [criteria: topic_fit:1, methods_fit:3, org_appeal:2, career_fit:4, location_fit:3]"`. For older items that have `tags` but no `criteria`, it falls back to the tag list for backwards compatibility. Criterion-annotated items give Claude richer calibration signal than a score alone.
 
 **Org boost:** After each feedback submission (desktop or phone), `profile_updater.py:update_liked_organizations()` counts orgs that appear ≥2 times with score≥8 OR action='applied'. Qualifying orgs (up to 20) are written to `config/profile.yaml` under the `liked_organizations:` key. The next scoring run injects these into the system prompt: "These organisations are strong matches based on past feedback … boost by +1–2 points by default."
 
