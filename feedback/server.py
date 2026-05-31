@@ -30,13 +30,14 @@ from flask import Flask, request, render_template_string, redirect, url_for, g
 app = Flask(__name__)
 log = logging.getLogger("feedback_server")
 
-# Unified tag vocabulary — used in feedback form and stored in SQLite + feedback_store.json
-PASS_TAGS  = ["Wrong field", "Too senior/junior", "Wrong location", "Postdoc",
-               "Too quantitative", "Too qualitative"]
-LIKE_TAGS  = ["Great org", "Interesting topic", "Good methods fit",
-               "Paid traineeship", "Policy relevance"]
-ALL_TAGS   = PASS_TAGS + LIKE_TAGS
-ALLOWED_TAGS = set(ALL_TAGS)
+# Per-criterion sliders — (key, label, hint_low, hint_high)
+CRITERIA = [
+    ("topic_fit",    "Topic relevance",     "Wrong research area",         "Core interest area"),
+    ("methods_fit",  "Methods match",        "Methods I don't use",         "Perfect methods match"),
+    ("org_appeal",   "Organization appeal",  "Not interested in this org",  "Dream organization"),
+    ("career_fit",   "Career stage fit",     "Wrong level (e.g. postdoc)",  "Perfect career stage"),
+    ("location_fit", "Location",             "Outside EU / unacceptable",   "Ideal location"),
+]
 
 PAGE_SIZE = 20
 
@@ -66,17 +67,19 @@ def _close_db(exc):
 
 
 def _write_feedback_sqlite(job_id: str, relevance_score: int,
-                            tags: list, comment: str) -> None:
+                            tags: list | None, comment: str,
+                            criteria: dict | None = None) -> None:
     """Upsert into the SQLite feedback table."""
     conn = _get_db()
     try:
         conn.execute("DELETE FROM feedback WHERE job_id = ?", (job_id,))
         conn.execute(
-            """INSERT INTO feedback (job_id, relevance_score, tags, comment)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT INTO feedback (job_id, relevance_score, tags, comment, criteria)
+               VALUES (?, ?, ?, ?, ?)""",
             (job_id, relevance_score,
              json.dumps(tags) if tags else None,
-             comment or None),
+             comment or None,
+             json.dumps(criteria) if criteria else None),
         )
         conn.commit()
     except Exception:
@@ -85,11 +88,13 @@ def _write_feedback_sqlite(job_id: str, relevance_score: int,
 
 def _write_feedback_json(job_id: str, url: str, title: str, org: str,
                           score: int, action: str, comment: str,
-                          tags: list | None = None) -> None:
+                          tags: list | None = None,
+                          criteria: dict | None = None) -> None:
     """Keep the JSON store up-to-date (used by profile_updater for prompt additions)."""
     try:
         from feedback.store import add_feedback
-        add_feedback(job_id, url, title, org, score, action, comment, tags=tags or [])
+        add_feedback(job_id, url, title, org, score, action, comment,
+                     tags=tags, criteria=criteria)
     except Exception:
         log.exception("JSON feedback store write failed")
 
@@ -166,15 +171,17 @@ tr:last-child td{border-bottom:none}
 /* Form */
 .form-section{margin-bottom:22px}
 label.field-label{display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:6px}
-input[type=range]{width:100%;accent-color:#2563eb;cursor:pointer}
-.score-label{font-size:16px;font-weight:bold;color:#1a1a2e;margin:6px 0 4px;min-height:26px}
-.score-hint{font-size:12px;color:#64748b;margin-bottom:12px}
-/* Tag pill toggles */
-.tag-group-label{font-size:12px;color:#6b7280;font-weight:600;margin:12px 0 6px}
-.tag-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
-.tag-pill{padding:4px 12px;border:1px solid #d1d5db;border-radius:9999px;font-size:13px;
-          cursor:pointer;background:#f9fafb;color:#374151;user-select:none;transition:all .1s}
-.tag-pill.selected{background:#2563eb;border-color:#2563eb;color:#fff}
+/* Criterion sliders — touch-friendly */
+input[type=range]{-webkit-appearance:none;width:100%;height:6px;border-radius:3px;
+                  background:#e2e8f0;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;
+  border-radius:50%;background:#2563eb;cursor:pointer}
+input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;
+  background:#2563eb;cursor:pointer;border:none}
+.criterion-row{padding:10px 0;touch-action:pan-y}
+.criterion-val{float:right;font-size:13px;font-weight:bold;color:#2563eb}
+.criterion-hints{display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;margin-top:2px}
+.derived-score{font-size:16px;font-weight:bold;color:#1a1a2e;margin:6px 0 4px;min-height:26px}
 textarea.field{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;
                font-size:14px;resize:vertical;min-height:80px}
 .detail-back{font-size:13px;color:#2563eb;text-decoration:none;display:inline-block;margin-bottom:12px}
@@ -368,11 +375,19 @@ def job_detail(job_id: int):
 
     existing_fb_html = ""
     if fb:
+        fb_criteria = json.loads(fb["criteria"] or "{}") if fb.get("criteria") else {}
         fb_tags = json.loads(fb["tags"] or "[]") if fb["tags"] else []
         fb_score = fb["relevance_score"] or "—"
+        if fb_criteria:
+            detail = "Criteria: " + ", ".join(
+                f"{k.replace('_', ' ')}:{v}" for k, v in fb_criteria.items()
+            )
+        elif fb_tags:
+            detail = "Tags: " + ", ".join(fb_tags)
+        else:
+            detail = ""
         applied_btn = (
             f'<form method="post" action="/jobs/{job_id}/feedback" style="display:inline">'
-            '<input type="hidden" name="relevance_score" value="10">'
             '<input type="hidden" name="action_override" value="applied">'
             '<button type="submit" style="background:#16a34a;color:#fff;padding:6px 14px;'
             'border-radius:5px;border:none;cursor:pointer;font-size:13px;margin-top:10px">'
@@ -380,19 +395,29 @@ def job_detail(job_id: int):
         )
         existing_fb_html = f"""<div class="existing-fb">
   ✅ Feedback already submitted — Score: <strong>{fb_score}/10</strong>
-  {f"&nbsp;|&nbsp; Tags: {', '.join(fb_tags)}" if fb_tags else ""}
+  {f"&nbsp;|&nbsp; {detail}" if detail else ""}
   {f"<br>Comment: {fb['comment']}" if fb['comment'] else ""}
   <br><small style="color:#16a34a">You can submit again to update it.</small>
   <br>{applied_btn} &nbsp; <small style="color:#16a34a">Mark as actually applied</small>
 </div>"""
 
-    # Build pill-toggle tag section
-    def _pill_group(label: str, tag_list: list) -> str:
-        pills = "".join(
-            f'<span class="tag-pill" data-tag="{t}" onclick="toggleTag(this)">{t}</span>'
-            for t in tag_list
-        )
-        return f'<div class="tag-group-label">{label}</div><div class="tag-pills">{pills}</div>'
+    # JS array of criterion keys for the derived-score updater
+    _js_keys = "[" + ", ".join(f'"{k}"' for k, *_ in CRITERIA) + "]"
+
+    # Build criterion slider rows
+    criteria_html = ""
+    for key, label, hint_low, hint_high in CRITERIA:
+        criteria_html += f"""
+    <div class="criterion-row">
+      <label class="field-label">{label}
+        <span class="criterion-val" id="val-{key}">3</span>
+      </label>
+      <input type="range" name="criteria_{key}" min="1" max="5" value="3"
+             oninput="document.getElementById('val-{key}').textContent=this.value;updateScore()">
+      <div class="criterion-hints">
+        <span>1 — {hint_low}</span><span>5 — {hint_high}</span>
+      </div>
+    </div>"""
 
     body = f"""<a class="detail-back" href="/jobs">← Back to all jobs</a>
 
@@ -425,24 +450,15 @@ def job_detail(job_id: int):
 
 <div class="card">
   <h2 style="margin-top:0">Your Feedback</h2>
+  <p style="color:#64748b;font-size:14px;margin:-8px 0 16px">
+    Rating: <strong>{job['title'] or '—'}</strong> at {job['organization'] or '—'}
+  </p>
   <form method="post" action="/jobs/{job_id}/feedback" id="fb-form">
 
     <div class="form-section">
-      <label class="field-label">How relevant is this job for you?</label>
-      <input type="range" id="slider" name="relevance_score"
-             min="1" max="10" value="5"
-             oninput="onSlide(this.value)">
-      <div class="score-label" id="score-label">— move slider to rate</div>
-      <div class="score-hint">1–3 = not relevant &nbsp;·&nbsp; 4–6 = possibly relevant &nbsp;·&nbsp; 7–10 = strong match</div>
-    </div>
-
-    <div class="form-section">
-      <label class="field-label">Why? <span style="font-weight:normal;color:#94a3b8">(optional tags — pick any)</span></label>
-      <div id="tag-section">
-        {_pill_group("Why pass?", PASS_TAGS)}
-        {_pill_group("Why like?", LIKE_TAGS)}
-      </div>
-      <input type="hidden" name="tags" id="tags-hidden" value="">
+      <label class="field-label">Rate each dimension:</label>
+      {criteria_html}
+      <div class="derived-score" id="derived-score">Score: 6 / 10</div>
     </div>
 
     <div class="form-section">
@@ -456,49 +472,17 @@ def job_detail(job_id: int):
 </div>
 
 <script>
-var sliderTouched = false;
-var selectedTags = [];
-
-function onSlide(val) {{
-  sliderTouched = true;
-  val = parseInt(val);
-  var labels = ['','Not relevant','Not relevant','Not relevant',
-                'Possibly relevant','Possibly relevant','Possibly relevant',
-                'Strong match','Strong match','Strong match','Strong match'];
-  document.getElementById('score-label').textContent = val + '/10 — ' + labels[val];
+function updateScore() {{
+  var keys = {_js_keys};
+  var total = 0;
+  keys.forEach(function(k) {{
+    var el = document.querySelector('[name="criteria_' + k + '"]');
+    if (el) total += parseInt(el.value);
+  }});
+  var score = Math.round(total / keys.length * 2);
+  document.getElementById('derived-score').textContent = 'Score: ' + score + ' / 10';
 }}
-
-function toggleTag(el) {{
-  var tag = el.getAttribute('data-tag');
-  if (el.classList.contains('selected')) {{
-    el.classList.remove('selected');
-    selectedTags = selectedTags.filter(function(t) {{ return t !== tag; }});
-  }} else {{
-    el.classList.add('selected');
-    selectedTags.push(tag);
-  }}
-  document.getElementById('tags-hidden').value = selectedTags.join('||');
-}}
-
-document.getElementById('fb-form').addEventListener('submit', function(e) {{
-  if (!sliderTouched) {{
-    e.preventDefault();
-    alert('Please move the slider to rate this job before submitting.');
-    return;
-  }}
-  // Convert tags hidden field to individual fields for getlist()
-  var tagsVal = document.getElementById('tags-hidden').value;
-  document.getElementById('tags-hidden').name = '';
-  if (tagsVal) {{
-    tagsVal.split('||').forEach(function(tag) {{
-      var inp = document.createElement('input');
-      inp.type = 'hidden';
-      inp.name = 'tags';
-      inp.value = tag;
-      document.getElementById('fb-form').appendChild(inp);
-    }});
-  }}
-}});
+updateScore();
 </script>"""
 
     return _page_html(job["title"] or "Job detail", body)
@@ -516,30 +500,35 @@ def submit_feedback(job_id: int):
     if job is None:
         return _page_html("Not found", "<p>Job not found.</p>"), 404
 
-    try:
-        relevance_score = int(request.form.get("relevance_score", 5))
-        relevance_score = max(1, min(10, relevance_score))
-    except (ValueError, TypeError):
-        relevance_score = 5
+    # Parse per-criterion sliders (1-5 each); compute derived relevance_score
+    criteria = {}
+    for key, *_ in CRITERIA:
+        try:
+            val = int(request.form.get(f"criteria_{key}", 3))
+            criteria[key] = max(1, min(5, val))
+        except (ValueError, TypeError):
+            criteria[key] = 3
 
-    raw_tags = request.form.getlist("tags")
-    tags = [t for t in raw_tags if t in ALLOWED_TAGS]
     comment = request.form.get("comment", "").strip()
 
-    # Detect "Applied" action — form value from the Applied button
+    # Detect "Applied" action — overrides computed score
     action_override = request.form.get("action_override", "")
     if action_override == "applied":
         action = "applied"
+        relevance_score = 10
     else:
+        # Derive relevance_score: avg(criteria) × 2, rounded to nearest int
+        relevance_score = max(1, min(10, round(sum(criteria.values()) / len(criteria) * 2)))
         action = "like" if relevance_score >= 7 else "pass"
 
     # Write to SQLite (authoritative)
-    _write_feedback_sqlite(str(job_id), relevance_score, tags, comment)
+    _write_feedback_sqlite(str(job_id), relevance_score, tags=None, comment=comment, criteria=criteria)
 
     # Write to JSON store (for profile_updater prompt additions)
     _write_feedback_json(
         str(job_id), job["url"] or "", job["title"] or "",
-        job["organization"] or "", relevance_score, action, comment, tags=tags,
+        job["organization"] or "", relevance_score, action, comment,
+        tags=None, criteria=criteria,
     )
 
     # Update org boost in profile.yaml (requires 2+ strong signals per org)
@@ -549,7 +538,7 @@ def submit_feedback(job_id: int):
     except Exception:
         log.warning("update_liked_organizations failed — continuing")
 
-    log.info(f"Feedback submitted: job_id={job_id} score={relevance_score} action={action} tags={tags}")
+    log.info(f"Feedback submitted: job_id={job_id} score={relevance_score} action={action} criteria={criteria}")
 
     return redirect(url_for("job_list", feedback="saved"))
 
@@ -564,7 +553,7 @@ def feedback_list():
 
     total = conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
     rows  = conn.execute(
-        """SELECT f.id, f.job_id, f.relevance_score, f.tags, f.comment,
+        """SELECT f.id, f.job_id, f.relevance_score, f.tags, f.criteria, f.comment,
                   f.timestamp, j.title, j.organization
            FROM feedback f
            LEFT JOIN jobs j ON j.id = CAST(f.job_id AS INTEGER)
@@ -578,7 +567,11 @@ def feedback_list():
     if rows:
         trows = []
         for r in rows:
-            row_tags = json.loads(r["tags"] or "[]") if r["tags"] else []
+            fb_criteria = json.loads(r["criteria"] or "{}") if r.get("criteria") else {}
+            if fb_criteria:
+                row_tags = [f"{k.replace('_',' ')}:{v}" for k, v in fb_criteria.items()]
+            else:
+                row_tags = json.loads(r["tags"] or "[]") if r["tags"] else []
             score = r["relevance_score"] or "—"
             score_style = ""
             if isinstance(score, int):
