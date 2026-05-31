@@ -1,6 +1,6 @@
 # Job Scraper
 
-A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 17 sources daily, runs a cheap Claude pre-screen to filter out irrelevant postings, scores each remaining job against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 6/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
+A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 24 sources daily, runs a cheap Claude pre-screen to filter out irrelevant postings, scores each remaining job against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 6/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
 
 Runs automatically via Windows Task Scheduler. No manual intervention needed once set up.
 
@@ -12,7 +12,7 @@ Runs automatically via Windows Task Scheduler. No manual intervention needed onc
 graph LR
     A[Task Scheduler<br/>07:00 daily] --> B[run.bat]
     B --> C[main.py]
-    C --> D[17 Scrapers]
+    C --> D[24 Scrapers]
     D --> E[Dedup check<br/>db/jobs.db]
     E --> F[Pre-screen<br/>Claude Haiku]
     F -- filtered --> M[filtered_jobs<br/>training data]
@@ -44,6 +44,13 @@ graph LR
 | EU Careers | Playwright (JS), seasonal | ✅ Active (Mar/Oct intakes only) |
 | FGV | Playwright (JS) | ✅ Active |
 | EPSO Blue Book | requests, seasonal | ✅ Active (Mar/Oct intakes only) |
+| Utrecht University | requests + BS4 | ✅ Active — [closes #8](https://github.com/timovanommeren/job_scraper/issues/8) |
+| Tilburg University | Playwright (SAP SuccessFactors) | ✅ Active |
+| Erasmus University Rotterdam | requests + BS4 | ✅ Active |
+| Radboud University | requests + BS4 | ✅ Active |
+| University of Amsterdam | Playwright | ✅ Active |
+| Vrije Universiteit Amsterdam | Playwright | ✅ Active |
+| University of Groningen | Playwright (click-navigate) | ✅ Active (~12/run, first page only) |
 | TNI | requests | ⚠️ Always 429 — [issue #1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | UN Careers | — | ❌ CloudFront 403 — [issue #2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | OECD | — | ❌ Cloudflare — [issue #3](https://github.com/timovanommeren/job_scraper/issues/3) |
