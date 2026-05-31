@@ -5,6 +5,40 @@
 
 ---
 
+## P2 — Blocked scrapers (infrastructure-level, not code bugs)
+
+> Read the full GitHub issue before attempting any fix — these were disabled for reasons that code changes alone cannot resolve.
+
+### TNI: 429 on every run — IP-level block · [#1](https://github.com/timovanommeren/job_scraper/issues/1)
+
+Amsterdam-based think tank with a drug policy programme. Server-side IP rate limit blocks the scraper before headers are evaluated. Reduced retries (2 instead of 5), realistic headers, and jitter all tried — no effect. **Next steps:** check for RSS feed at `tni.org/rss`; inspect DevTools for a Drupal JSON views endpoint; or remove and add to manual weekly check list.
+
+---
+
+### UN Careers: CloudFront 403 — CDN blocks all automation · [#2](https://github.com/timovanommeren/job_scraper/issues/2)
+
+Covers UNDP, UNODC, UNESCO, and other UN agencies. Block occurs at CDN layer before any content loads — selector fixes are irrelevant. **Next steps:** find the REST API backing the search UI (DevTools → Network tab); try INSPIRA portal (`inspira.un.org`); or rely on Impactpool which aggregates UN jobs.
+
+---
+
+### OECD: Cloudflare bot challenge · [#3](https://github.com/timovanommeren/job_scraper/issues/3)
+
+High-priority target (policy, social science, Paris). Cloudflare challenge fires before content loads — Playwright and requests both blocked. **Next steps:** check for RSS/API (`oecd.org/careers/rss`); try `playwright-stealth` package; or check the `erecruit.oecd.org` sub-domain for lighter bot protection.
+
+---
+
+### BIT: Cloudflare block + currently 0 positions · [#4](https://github.com/timovanommeren/job_scraper/issues/4)
+
+Behavioural Insights Team — relevant org but 0 open positions at time of audit (2026-05-28). **Next steps:** test `boards-api.greenhouse.io/v1/boards/behaviouralinsightsteam/jobs` (Greenhouse ATS, typically bot-protection-free); or check manually every 2–3 months rather than maintaining a scraper.
+
+---
+
+### AcademicTransfer: not all Dutch PhDs included · [#8](https://github.com/timovanommeren/job_scraper/issues/8)
+
+Some Dutch university PhD positions are posted directly on university sites and not aggregated by AcademicTransfer. **Next steps:** identify which universities post jobs independently and whether individual university scrapers are worth adding.
+
+---
+
 ## P1 — Blocked on conditions being met
 
 ### Option C migration: calibrate_threshold.py + embedding pre-filter · [#11](https://github.com/timovanommeren/job_scraper/issues/11)
