@@ -26,7 +26,7 @@ def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> 
     Falls back to the localhost Flask URL when CF_WORKER_URL is not configured.
 
     action values: "like", "pass", "rate"
-    HMAC uses a 24-hour daily bucket so links are valid for the whole calendar day.
+    HMAC uses a 7-day weekly bucket so links are valid for the full week.
     """
     cf_url = os.getenv("CF_WORKER_URL", "").rstrip("/")
     secret = os.getenv("CF_WORKER_SECRET", "")
@@ -34,7 +34,7 @@ def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> 
         # Fallback: existing localhost /fb route (desktop only)
         return f"{FEEDBACK_BASE}/fb?id={job_id}&a={action}"
 
-    day_bucket = int(time.time()) // 86400
+    day_bucket = int(time.time()) // 604800
     payload = f"{job_id}:{action}:{day_bucket}"
     sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
 
@@ -54,7 +54,7 @@ def _skip_suggestion_url(suggestion_id: int) -> str:
     secret = os.getenv("CF_WORKER_SECRET", "")
     if not cf_url or not secret:
         return f"http://localhost:5001/skip-suggestion?id={suggestion_id}"
-    day_bucket = int(time.time()) // 86400
+    day_bucket = int(time.time()) // 604800
     payload = f"{suggestion_id}:skip_suggestion:{day_bucket}"
     sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
     return f"{cf_url}/feedback?suggestion_id={suggestion_id}&action=skip_suggestion&sig={sig}"

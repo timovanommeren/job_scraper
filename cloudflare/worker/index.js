@@ -36,12 +36,12 @@ async function computeHMAC(secret, payload) {
     .slice(0, 16);
 }
 
-function dailyBucket() {
-  return Math.floor(Date.now() / 1000 / 86400);
+function weeklyBucket() {
+  return Math.floor(Date.now() / 1000 / 604800);
 }
 
 async function verifyActionSig(secret, jobId, action, sig) {
-  const payload = `${jobId}:${action}:${dailyBucket()}`;
+  const payload = `${jobId}:${action}:${weeklyBucket()}`;
   const expected = await computeHMAC(secret, payload);
   return expected === sig;
 }
