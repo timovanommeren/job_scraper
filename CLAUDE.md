@@ -123,7 +123,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
 - **Retry logic:** `tenacity` — all scrapers and LLM calls use `@retry` decorators.
 - **HTTP retry:** `stop_after_attempt(3)`, `wait_exponential(min=2, max=15)` — standard for scrapers. TNI uses `stop_after_attempt(2)` to limit wasted time.
-- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Rating row pills and legacy like/pass buttons are HMAC-signed (24-hour daily bucket; action="rate" for pills, action="like"/"pass" for buttons). Skip-suggestion links are also HMAC-signed (action="skip_suggestion"). KV key prefixes: `feedback:{job_id}` for ratings, `skip:{suggestion_id}` for dismissals. `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it.
+- **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + KV store. Rating row pills and legacy like/pass buttons are HMAC-signed (7-day weekly bucket; action="rate" for pills, action="like"/"pass" for buttons). Skip-suggestion links are also HMAC-signed (action="skip_suggestion"). KV key prefixes: `feedback:{job_id}` for ratings, `skip:{suggestion_id}` for dismissals. `feedback/cf_sync.py` polls the Worker hourly and writes to local DB + `feedback_store.json`. Optional — pipeline works without it. Deploy Worker changes with `wrangler deploy` from `cloudflare/worker/` (requires `wrangler login` if session expired).
 
 ### Required environment variables (`.env` in project root)
 
