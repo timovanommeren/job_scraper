@@ -3,11 +3,14 @@ Reads stored feedback history and generates:
   1. Extra system-prompt text (few-shot calibration examples for Claude)
   2. HTML footer block for the email digest
   3. Liked-org boost in config/profile.yaml (via update_liked_organizations)
-Both functions degrade gracefully if the feedback store is missing or empty.
+  4. Decay-weighted per-criterion preference averages (via update_explicit_preferences)
+All write functions degrade gracefully if the feedback store is missing or empty.
 """
 from __future__ import annotations
 import logging
+import math
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -65,20 +68,77 @@ def generate_prompt_additions() -> str:
         for item in passed:
             lines.append(f'  ❌ [{item["score_given"]}/10] {item["title"]} @ {item["organization"]}{_item_note(item)}')
 
-    # Inject liked-org boost if profile.yaml has liked_organizations
-    try:
-        import yaml
-        profile = yaml.safe_load(_PROFILE_PATH.read_text(encoding="utf-8")) or {}
-        orgs = profile.get("liked_organizations", [])
-        if orgs:
-            lines.append(
-                f"\nORGANISATIONS WITH STRONG TRACK RECORD (boost by +1–2 points by default): "
-                + ", ".join(orgs)
-            )
-    except Exception:
-        pass
-
     return "\n".join(lines)
+
+
+_HALF_LIFE_DAYS = 90  # preference feedback older than 90 days has half the weight
+
+
+def _write_profile_atomic(profile: dict) -> None:
+    """Write profile dict to profile.yaml via tmp+rename (atomic on Windows NTFS)."""
+    import yaml
+    tmp = _PROFILE_PATH.with_suffix(".tmp")
+    tmp.write_text(
+        yaml.dump(profile, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    tmp.replace(_PROFILE_PATH)
+
+
+def _decay_weight(feedback_date_str: str, today: date) -> float:
+    """Exponential decay weight for a feedback item. Returns 1.0 at age=0, ~0.5 at age=90 days."""
+    age_days = (today - date.fromisoformat(feedback_date_str[:10])).days
+    return math.exp(-math.log(2) * max(age_days, 0) / _HALF_LIFE_DAYS)
+
+
+def _weighted_mean(scores_with_dates: list[tuple[float, str]], today: date) -> float | None:
+    """Decay-weighted mean. weighted_mean = sum(w_i * score_i) / sum(w_i). Returns None if empty."""
+    if not scores_with_dates:
+        return None
+    weights = [_decay_weight(d, today) for _, d in scores_with_dates]
+    return sum(w * s for w, (s, _) in zip(weights, scores_with_dates)) / sum(weights)
+
+
+def update_explicit_preferences() -> None:
+    """
+    Reads criteria scores from feedback_store.json, computes decay-weighted averages
+    per dimension, and writes them to profile.yaml:explicit_preferences.
+    Called after each feedback submission alongside update_liked_organizations().
+    Items without a 'criteria' key are skipped gracefully.
+    """
+    try:
+        from feedback.store import get_all
+        import yaml
+
+        items = get_all()
+        today = date.today()
+        dimensions = ["topic_fit", "methods_fit", "org_appeal", "career_fit", "location_fit"]
+
+        new_weights: dict = {}
+        for dim in dimensions:
+            scores_with_dates = [
+                (float(item["criteria"][dim]), item["timestamp"])
+                for item in items
+                if item.get("criteria") and dim in item["criteria"]
+            ]
+            wm = _weighted_mean(scores_with_dates, today)
+            if wm is not None:
+                new_weights[dim] = {
+                    "weighted_mean": round(wm, 2),
+                    "n_samples": len(scores_with_dates),
+                    "last_updated": today.isoformat(),
+                }
+
+        if not new_weights:
+            return
+
+        profile = yaml.safe_load(_PROFILE_PATH.read_text(encoding="utf-8")) or {}
+        profile["explicit_preferences"] = new_weights
+        _write_profile_atomic(profile)
+        log.info(f"[profile_updater] explicit_preferences updated: {list(new_weights.keys())}")
+
+    except Exception:
+        log.exception("[profile_updater] update_explicit_preferences failed")
 
 
 def update_liked_organizations() -> None:
@@ -122,10 +182,7 @@ def update_liked_organizations() -> None:
             return  # nothing changed
 
         profile["liked_organizations"] = merged
-        _PROFILE_PATH.write_text(
-            yaml.dump(profile, allow_unicode=True, default_flow_style=False, sort_keys=False),
-            encoding="utf-8",
-        )
+        _write_profile_atomic(profile)
         log.info(f"[profile_updater] liked_organizations updated: {merged}")
 
     except Exception:

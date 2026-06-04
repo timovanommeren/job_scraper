@@ -1,6 +1,7 @@
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional
 import yaml
 import instructor
@@ -58,44 +59,116 @@ class JobPosting(BaseModel):
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
-def _load_system_prompt() -> str:
-    """Load system prompt from config/profile.yaml, falling back to the embedded default."""
-    profile_path = os.path.join(os.path.dirname(__file__), "..", "config", "profile.yaml")
-    try:
-        with open(profile_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return data.get("system_prompt", "").strip()
-    except Exception:
-        logger.warning("Could not load config/profile.yaml; using embedded system prompt")
-        return _FALLBACK_SYSTEM_PROMPT
+_PROFILE_PATH = Path(__file__).resolve().parent.parent / "config" / "profile.yaml"
+
+# Used only when profile.yaml is missing or unreadable — not a scoring substitute.
+_FALLBACK_SYSTEM_PROMPT = (
+    "You are a job relevance screener. config/profile.yaml could not be loaded. "
+    "Score all jobs 5/10 until the profile is restored."
+)
 
 
-# Embedded fallback so the agent works even if config/profile.yaml is missing
-_FALLBACK_SYSTEM_PROMPT = """You are a job relevance screener for Timo van Ommeren.
+def _render_profile_prompt(profile: dict) -> str:
+    """Assemble the LLM system prompt from the structured profile.yaml sections."""
+    q = profile["qualifications"]
+    t = profile["targets"]
+    h = profile["hard_rules"]
+    ep = profile.get("explicit_preferences", {})
+
+    experience_lines = "\n".join(f"  * {e}" for e in q.get("experience", []))
+    disqualify_lines = "\n".join(f"- {d}" for d in h.get("disqualify", []))
+    penalise_lines   = "\n".join(f"- {p}" for p in h.get("penalise_hard", []))
+    bonus_lines      = "\n".join(f"- {b}" for b in t.get("bonus_topics", []))
+    liked_orgs       = profile.get("liked_organizations", [])
+
+    prompt = f"""You are a job relevance screener for Timo van Ommeren.
 
 TIMO'S PROFILE:
-- Education: MSc Methodology & Statistics (Utrecht University, ongoing); BSc Psychology cum laude GPA 8.2 (UvA, 2022)
-- Thesis: Cold start problem in AI-assisted systematic reviews using ASReview (LLM-based priors for classifier initialisation)
-- Technical: R (proficient), Python (intermediate — LLM APIs, data pipelines, ASReview), SPSS, statistical modelling, LaTeX
+- Education: {q.get("education", "")}
+- Thesis: {q.get("thesis", "")}
+- Technical: {q.get("skills_technical", "")}
 - Recent experience:
-  * ~9-month internship at EMCDDA/EU Drug Agency (EUDA)
-  * Junior researcher, UvA Dept of Psychological Methods — drug legalisation attitude research
-  * Gemeente Amsterdam "Dealing with Drugs" conference co-organiser
-  * Data analyst volunteer, Volt Europa
-- Languages: Dutch (native), English (fluent), Portuguese (decent), Spanish (learning)
-- Location: Amsterdam; open to temporary relocation including outside Europe
-- Target sectors: EU institutions, UN system, think tanks (RAND, BIT, TNI, Busara, CASE Poland), Dutch national research institutes (SCP, WODC, Trimbos)
-- Target roles: researcher, data analyst, policy analyst, PhD position, traineeship, methodology specialist
+{experience_lines}
+- Languages: {q.get("languages", "")}
+- Location: {q.get("location", "")}
+- Target sectors: {", ".join(t.get("sectors", []))}
+- Target roles: {", ".join(t.get("roles", []))}
 - Strong fit for: drug policy, public health, social/behavioural science, quantitative methods, evidence synthesis, AI/LLM in research
 
-SCORING INSTRUCTIONS:
-- Score 8–10: Role directly matches Timo's background + target sector. He could submit a competitive application today.
-- Score 5–7: Interesting but one element is missing (wrong sector, slight overqualification, partial language fit).
-- Score 1–4: Wrong field, requires qualifications Timo doesn't have, or wrong seniority level.
-- Penalise: roles requiring PhD already earned, 5+ years unrelated experience, clinical medical degrees, or hard language requirements.
-- Bonus points: Amsterdam-based, EU/UN institutional setting, drug/addiction/public health policy, quantitative methods, statistical modelling, systematic review, AI in research."""
+══════════════════════════════════════════════════════════
+HARD DISQUALIFIERS — score MAX 2/10, do not score higher:
+══════════════════════════════════════════════════════════
+{disqualify_lines}
 
-SYSTEM_PROMPT = _load_system_prompt()
+══════════════════════════════════════════════════════════
+STRONG PENALTIES — reduce score by 2–3 points:
+══════════════════════════════════════════════════════════
+{penalise_lines}
+
+══════════════════════════════════════════════════════════
+IMPORTANT CLARIFICATION — PhD positions:
+══════════════════════════════════════════════════════════
+A "PhD position" or "PhD student position" or "doctoral researcher" typically means:
+you are APPLYING TO BECOME a PhD student — you do NOT need a PhD to apply, only an MSc.
+This is Timo's preferred career trajectory. Score these positively (6–9/10) if the topic
+and institution match his profile. Do NOT confuse this with "Postdoc" which requires
+a completed PhD.
+
+══════════════════════════════════════════════════════════
+SCORING SCALE:
+══════════════════════════════════════════════════════════
+- Score 8–10: Role directly matches Timo's background + target sector. Competitive application today.
+- Score 6–7: Good fit but one element is off (slightly wrong sector, partial language match, etc.)
+- Score 4–5: Interesting but notable mismatch (wrong country for permanent role, adjacent topic, wrong level)
+- Score 2–3: Wrong level, wrong field, or fails a hard disqualifier
+- Score 1: Completely irrelevant or impossible to apply for
+
+══════════════════════════════════════════════════════════
+BONUS POINTS (+1 to +2):
+══════════════════════════════════════════════════════════
+{bonus_lines}
+"""
+
+    if liked_orgs:
+        orgs_str = ", ".join(liked_orgs)
+        prompt += f"\nORGANISATIONS WITH STRONG TRACK RECORD (boost by +1–2 points by default): {orgs_str}\n"
+
+    if ep and any(
+        isinstance(v, dict) and v.get("n_samples", 0) >= 5 for v in ep.values()
+    ):
+        n_max = max(
+            (v.get("n_samples", 0) for v in ep.values() if isinstance(v, dict)), default=0
+        )
+        lines = [
+            f"- {dim}: {'positive' if data['weighted_mean'] >= 6 else 'negative'} signal"
+            f" (avg {data['weighted_mean']:.1f}/10 across {data['n_samples']} rated jobs)"
+            for dim, data in ep.items()
+            if isinstance(data, dict) and data.get("n_samples", 0) >= 5
+        ]
+        if lines:
+            prompt += f"\nLEARNED PREFERENCE SIGNALS (from {n_max} rated jobs):\n" + "\n".join(lines) + "\n"
+
+    return prompt
+
+
+def _get_full_system_prompt() -> str:
+    """Assemble system prompt from structured profile.yaml + feedback calibration examples."""
+    try:
+        with open(_PROFILE_PATH, encoding="utf-8") as f:
+            profile = yaml.safe_load(f) or {}
+        prompt = _render_profile_prompt(profile)
+    except Exception:
+        logger.warning("Could not load config/profile.yaml — using fallback prompt")
+        prompt = _FALLBACK_SYSTEM_PROMPT
+
+    try:
+        from feedback.profile_updater import generate_prompt_additions
+        additions = generate_prompt_additions()
+        if additions:
+            prompt += additions
+    except Exception:
+        pass
+    return prompt
 
 # ── Pre-screen (Layer 2 cheap field-check) ─────────────────────────────────────
 
@@ -160,18 +233,6 @@ def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job"
     except Exception:
         logger.warning(f"pre_screen failed for {raw_job.url!r} — failing open")
         return True, "pre_screen_error"
-
-
-def _get_full_system_prompt() -> str:
-    """Return system prompt + any feedback-based calibration additions."""
-    try:
-        from feedback.profile_updater import generate_prompt_additions
-        additions = generate_prompt_additions()
-        if additions:
-            return SYSTEM_PROMPT + additions
-    except Exception:
-        pass
-    return SYSTEM_PROMPT
 
 
 # ── Client factory ─────────────────────────────────────────────────────────────

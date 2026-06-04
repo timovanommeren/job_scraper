@@ -1,63 +1,83 @@
-system_prompt: "You are a job relevance screener for Timo van Ommeren.\n\nTIMO'S PROFILE:\n\
-  - Education: MSc Methodology & Statistics (Utrecht University, just finished); BSc\
-  \ Psychology cum laude GPA 8.2 (UvA, 2022)\n- Thesis: Cold start problem in AI-assisted\
-  \ systematic reviews using ASReview (LLM-based priors for classifier initialisation)\n\
-  - Technical: R (proficient — used extensively in research), Python (intermediate\
-  \ — LLM APIs, data pipelines, ASReview), SPSS, statistical modelling, LaTeX\n- Recent\
-  \ experience:\n  * ~9-month internship at EMCDDA/EU Drug Agency (EUDA) — still in\
-  \ contact with staff\n  * Junior researcher, UvA Dept of Psychological Methods —\
-  \ drug legalisation attitude research, Twitter network analysis\n  * Gemeente Amsterdam\
-  \ \"Dealing with Drugs\" conference co-organiser — liaised with IDPC, TNI, TDPF\n\
-  \  * Data analyst volunteer, Volt Europa\n- Published: opinion pieces on drug policy\
-  \ (Normaal Over Drugs NGO); AI in academia (DUB/Utrecht)\n- Languages: Dutch (native),\
-  \ English (fluent — 8.7 early state exam), Portuguese (decent), Spanish (learning)\n\
-  - Location: Amsterdam; open to temporary relocation\n- Target sectors: EU institutions,\
-  \ UN system, think tanks (RAND, BIT, TNI, Busara, CASE Poland), Dutch national research\
-  \ institutes (SCP, WODC, Trimbos), international development orgs\n- Target roles:\
-  \ researcher, data analyst, policy analyst, PhD student position, traineeship, internship,\
-  \ methodology specialist, systematic review specialist, evidence synthesis roles\n\
-  - Strong fit for: drug policy, public health, social/behavioural science, quantitative\
-  \ methods, evidence synthesis, AI/LLM in research, addiction research\n\n══════════════════════════════════════════════════════════\n\
-  HARD DISQUALIFIERS — score MAX 2/10, do not score higher:\n══════════════════════════════════════════════════════════\n\
-  - POSTDOC / Postdoctoral researcher / Postdoctoral associate:\n  These explicitly\
-  \ require a completed PhD. Timo is finishing his MSc and does NOT yet\n  have a\
-  \ PhD. He cannot apply. Score 1–2/10 regardless of topic or institution.\n- Roles\
-  \ requiring 5+ years of experience in the relevant field\n- Roles requiring a medical\
-  \ degree (MD/MBBS) or clinical certification\n- Roles with hard language requirements\
-  \ Timo doesn't meet (German-only, Arabic-only, etc.)\n\n══════════════════════════════════════════════════════════\n\
-  STRONG PENALTIES — reduce score by 2–3 points:\n══════════════════════════════════════════════════════════\n\
-  - Senior / Associate / Lead / Principal / Manager in title:\n  These typically require\
-  \ 3–7 years of post-grad experience. Timo just finished his MSc.\n  Lower by 2–3\
-  \ points unless explicitly entry-level or labelled as \"junior\".\n  Exception:\
-  \ \"Research Associate\" in some EU/UN contexts means junior researcher — use judgement.\n\
-  - Primary focus on AI security / cybersecurity / information security:\n  Too computer-science\
-  \ heavy; outside Timo's interest and background. Lower by 2–3.\n- Primary focus\
-  \ on climate change / environmental sustainability / green energy:\n  Not Timo's\
-  \ background or interest. Lower by 2.\n- Communication / PR / marketing / media\
-  \ roles:\n  Timo is a researcher, not a communications professional. Lower by 3.\n\
-  - Permanent (non-traineeship) position outside the Netherlands or Western Europe:\n\
-  \  Timo is Amsterdam-based and open to relocation in NL/Western Europe for permanent\
-  \ jobs.\n  Outside that region: lower by 2 for permanent roles.\n  Exception: internships\
-  \ and traineeships worldwide are fully acceptable — no penalty.\n\n══════════════════════════════════════════════════════════\n\
-  IMPORTANT CLARIFICATION — PhD positions:\n══════════════════════════════════════════════════════════\n\
-  A \"PhD position\" or \"PhD student position\" or \"doctoral researcher\" typically\
-  \ means:\nyou are APPLYING TO BECOME a PhD student — you do NOT need a PhD to apply,\
-  \ only an MSc.\nThis is Timo's preferred career trajectory. Score these positively\
-  \ (6–9/10) if the topic\nand institution match his profile. Do NOT confuse this\
-  \ with \"Postdoc\" which requires\na completed PhD.\n\n══════════════════════════════════════════════════════════\n\
-  SCORING SCALE:\n══════════════════════════════════════════════════════════\n- Score\
-  \ 8–10: Role directly matches Timo's background + target sector. Competitive application\
-  \ today.\n- Score 6–7: Good fit but one element is off (slightly wrong sector, partial\
-  \ language match, etc.)\n- Score 4–5: Interesting but notable mismatch (wrong country\
-  \ for permanent role, adjacent topic, wrong level)\n- Score 2–3: Wrong level, wrong\
-  \ field, or fails a hard disqualifier\n- Score 1: Completely irrelevant or impossible\
-  \ to apply for\n\n══════════════════════════════════════════════════════════\nBONUS\
-  \ POINTS (+1 to +2):\n══════════════════════════════════════════════════════════\n\
-  - Amsterdam-based or Netherlands-based\n- EU/UN institutional setting (EMCDDA, EUDA,\
-  \ UNODC, Europol, etc.)\n- Drug policy / addiction / substance use research\n- Quantitative\
-  \ methods, statistical modelling, systematic review, evidence synthesis\n- AI/LLM\
-  \ in social science or public health research\n- Dutch language used or preferred\n\
-  - Paid traineeship / structured graduate programme at target organisation\n"
+qualifications:
+  education: MSc Methodology & Statistics (Utrecht University, just finished); BSc
+    Psychology cum laude GPA 8.2 (UvA, 2022)
+  thesis: Cold start problem in AI-assisted systematic reviews using ASReview (LLM-based
+    priors for classifier initialisation)
+  skills_technical: R (proficient — used extensively in research), Python (intermediate
+    — LLM APIs, data pipelines, ASReview), SPSS, statistical modelling, LaTeX
+  experience:
+  - ~9-month internship at EMCDDA/EU Drug Agency (EUDA) — still in contact with staff
+  - Junior researcher, UvA Dept of Psychological Methods — drug legalisation attitude
+    research, Twitter network analysis
+  - Gemeente Amsterdam 'Dealing with Drugs' conference co-organiser — liaised with
+    IDPC, TNI, TDPF
+  - Data analyst volunteer, Volt Europa
+  - 'Published: opinion pieces on drug policy (Normaal Over Drugs NGO); AI in academia
+    (DUB/Utrecht)'
+  languages: Dutch (native), English (fluent — 8.7 early state exam), Portuguese (decent),
+    Spanish (learning)
+  location: Amsterdam; open to temporary relocation
+hard_rules:
+  disqualify:
+  - POSTDOC / Postdoctoral researcher / Postdoctoral associate — requires completed
+    PhD. Timo has MSc only. Score 1-2/10 regardless of topic or institution.
+  - Roles requiring 5+ years of experience in the relevant field
+  - Roles requiring a medical degree (MD/MBBS) or clinical certification
+  - Roles with hard language requirements Timo doesn't meet (German-only, Arabic-only,
+    etc.)
+  penalise_hard:
+  - 'Senior / Associate / Lead / Principal / Manager in title — typically 3-7 years
+    post-grad experience required. Lower by 2-3 unless explicitly entry-level or labelled
+    junior. Exception: ''Research Associate'' in EU/UN contexts means junior researcher.'
+  - Primary focus on AI security / cybersecurity / information security — lower by
+    2-3
+  - Primary focus on climate change / environmental sustainability / green energy
+    — lower by 2
+  - Communication / PR / marketing / media roles — lower by 3
+  - 'Permanent (non-traineeship) position outside Netherlands or Western Europe —
+    lower by 2. Exception: internships and traineeships worldwide are fully acceptable.'
+targets:
+  sectors:
+  - EU institutions (EMCDDA, EUDA, UNODC, Europol)
+  - UN system
+  - Think tanks (RAND, BIT, TNI, Busara, CASE Poland)
+  - Dutch national research institutes (SCP, WODC, Trimbos)
+  - International development organisations
+  roles:
+  - PhD student position / doctoral researcher
+  - Paid traineeship / structured graduate programme
+  - Researcher / data analyst / policy analyst
+  - Methodology specialist / systematic review specialist
+  - Evidence synthesis roles
+  bonus_topics:
+  - Drug policy / addiction / substance use research
+  - Quantitative methods, statistical modelling, systematic review, evidence synthesis
+  - AI/LLM in social science or public health research
+  - Amsterdam-based or Netherlands-based
+  - EU/UN institutional setting (EMCDDA, EUDA, UNODC, Europol, etc.)
+  - Dutch language used or preferred
+  - Paid traineeship / structured graduate programme at target organisation
+explicit_preferences:
+  topic_fit:
+    weighted_mean: 2.97
+    n_samples: 2
+    last_updated: '2026-06-04'
+  methods_fit:
+    weighted_mean: 2.97
+    n_samples: 2
+    last_updated: '2026-06-04'
+  org_appeal:
+    weighted_mean: 2.48
+    n_samples: 2
+    last_updated: '2026-06-04'
+  career_fit:
+    weighted_mean: 3.98
+    n_samples: 2
+    last_updated: '2026-06-04'
+  location_fit:
+    weighted_mean: 3.49
+    n_samples: 2
+    last_updated: '2026-06-04'
 liked_organizations:
 - RAND Corporation
 - SCP

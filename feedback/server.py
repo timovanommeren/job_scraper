@@ -574,12 +574,13 @@ def submit_feedback(job_id: int):
         tags=None, criteria=criteria,
     )
 
-    # Update org boost in profile.yaml (requires 2+ strong signals per org)
+    # Update profile.yaml: org boost + decay-weighted preference averages
     try:
-        from feedback.profile_updater import update_liked_organizations
+        from feedback.profile_updater import update_liked_organizations, update_explicit_preferences
         update_liked_organizations()
+        update_explicit_preferences()
     except Exception:
-        log.warning("update_liked_organizations failed — continuing")
+        log.warning("update_liked_organizations/update_explicit_preferences failed — continuing")
 
     log.info(f"Feedback submitted: job_id={job_id} score={relevance_score} action={action} criteria={criteria}")
 
@@ -760,10 +761,11 @@ def api_feedback():
     )
 
     try:
-        from feedback.profile_updater import update_liked_organizations
+        from feedback.profile_updater import update_liked_organizations, update_explicit_preferences
         update_liked_organizations()
+        update_explicit_preferences()
     except Exception:
-        log.warning("update_liked_organizations failed — continuing")
+        log.warning("update_liked_organizations/update_explicit_preferences failed — continuing")
 
     log.info(f"[api] CF feedback: job_id={job_id} score={relevance_score} action={action} criteria={criteria is not None}")
     return jsonify({"status": "ok", "score": relevance_score}), 200
@@ -820,7 +822,7 @@ def settings():
             smt = int(request.form["strong_match_threshold"])
             mt  = int(request.form["maybe_threshold"])
             ems = int(request.form["email_also_min_score"])
-            sno = request.form.get("send_if_no_new_jobs") == "1"
+            sno = "1" in request.form.getlist("send_if_no_new_jobs")
             mje = int(request.form["max_jobs_in_email"])
             smj = int(request.form["source_recommender_min_jobs"])
         except (KeyError, ValueError) as exc:
