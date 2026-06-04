@@ -1,25 +1,19 @@
 // Cloudflare Worker — job feedback routing for Timo's job scraper
 //
 // Routes:
-//   GET  /feedback?job_id=X&action=like|pass&sig=HMAC         — quick like/pass from email
-//   GET  /feedback?job_id=X&score=N&sig=HMAC                  — rating row pill tap
-//   GET  /feedback?suggestion_id=N&action=skip_suggestion&sig  — skip a source suggestion
-//   GET  /rate?job_id=X&sig=HMAC                               — serve mobile rating form
-//   POST /rate                                                  — submit rating form
-//   GET  /poll                                                  — pull pending entries (Authorization header)
-//   DELETE /poll                                                — clear pulled entries (Authorization header)
+//   GET  /feedback?job_id=X&score=N&sig=HMAC              — rating row pill tap → POSTs to Flask
+//   GET  /feedback?job_id=X&action=like|pass&sig=HMAC     — legacy like/pass → POSTs to Flask
+//   GET  /feedback?suggestion_id=N&action=skip_suggestion&sig — skip suggestion → POSTs to Flask
+//   GET  /survey?job_id=X&sig=HMAC&title=...&org=...       — serve mobile criteria form
+//   POST /survey                                            — submit criteria form → POSTs to Flask
+//   GET  /rate?job_id=X&sig=HMAC                           — backward compat: renders survey form
 //
-// KV key prefixes:
-//   feedback:{job_id}     — job ratings (like/pass/rate)
-//   skip:{suggestion_id}  — source suggestion dismissals
+// Environment bindings:
+//   CF_WORKER_SECRET  — shared HMAC + API auth secret (wrangler secret put CF_WORKER_SECRET)
+//   FLASK_API_URL     — Cloudflare Tunnel URL proxying to Flask (set in wrangler.toml [vars])
 //
-// Environment bindings (set via wrangler secret / wrangler.toml):
-//   CF_WORKER_SECRET  — shared HMAC + poll auth secret
-//   FEEDBACK_KV       — KV namespace binding
-//
-// Verified 2026-05-29. Deploy: wrangler deploy
-
-const KV_TTL = 60 * 60 * 24 * 7; // 7 days in seconds
+// No KV namespace — all feedback is forwarded directly to Flask via FLASK_API_URL.
+// Verified 2026-06-04. Deploy: wrangler deploy (runs generate_worker_form.py via [build])
 
 // ── HMAC helpers ──────────────────────────────────────────────────────────────
 
@@ -46,12 +40,25 @@ async function verifyActionSig(secret, jobId, action, sig) {
   return expected === sig;
 }
 
+// ── Flask API helper ──────────────────────────────────────────────────────────
+
+async function postToFlask(flaskUrl, secret, path, body) {
+  const resp = await fetch(`${flaskUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${secret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return resp;
+}
+
 // ── HTML helpers ──────────────────────────────────────────────────────────────
 
 function thanksPage(action, score) {
   let emoji, msg;
   if (typeof score === "number") {
-    // Score-aware tiers from the rating row
     if (score >= 7) { emoji = "✅"; msg = `Marked as Interested · ${score}/10`; }
     else if (score >= 5) { emoji = "📝"; msg = `Rating saved · ${score}/10`; }
     else { emoji = "❌"; msg = `Marked as Pass · ${score}/10`; }
@@ -79,103 +86,88 @@ function thanksPage(action, score) {
 <div class="card">
   <div class="emoji">${emoji}</div>
   <h2>${msg}</h2>
-  <p>Feedback syncs to your machine within the hour.</p>
+  <p>Feedback saved to your scoring pipeline.</p>
 </div>
 </body></html>`,
     { status: 200, headers: { "Content-Type": "text/html;charset=UTF-8" } }
   );
 }
 
-function ratePage(jobId, sig) {
+function surveyThanksPage() {
   return new Response(
     `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rate this job</title>
+<title>Feedback saved</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-       margin:0;padding:20px;background:#f8fafc;color:#1e293b}
-  .card{background:#fff;border-radius:12px;padding:24px;max-width:480px;
-        margin:auto;box-shadow:0 2px 12px rgba(0,0,0,.08)}
-  h2{margin:0 0 20px;font-size:18px}
-  label{display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:#374151}
-  input[type=range]{width:100%;accent-color:#2563eb;cursor:pointer}
-  .score-display{font-size:18px;font-weight:bold;margin:6px 0 4px;min-height:28px;color:#1a1a2e}
-  .tag-group-label{font-size:12px;color:#6b7280;font-weight:600;margin:14px 0 6px}
-  .tag-pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
-  .tag-pill{padding:6px 14px;border:1px solid #d1d5db;border-radius:9999px;font-size:14px;
-            cursor:pointer;background:#f9fafb;color:#374151;user-select:none;
-            -webkit-tap-highlight-color:transparent}
-  .tag-pill.selected{background:#2563eb;border-color:#2563eb;color:#fff}
-  textarea{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;
-           border-radius:6px;font-size:14px;resize:vertical;min-height:70px;margin-top:4px}
-  .btn{display:block;width:100%;padding:14px;background:#2563eb;color:#fff;
-       border:none;border-radius:6px;font-size:16px;font-weight:600;
-       cursor:pointer;margin-top:16px}
-  .btn:hover{background:#1d4ed8}
+       margin:0;display:flex;align-items:center;justify-content:center;
+       min-height:100vh;background:#f8fafc;color:#1e293b}
+  .card{background:#fff;border-radius:12px;padding:32px 24px;text-align:center;
+        max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  .emoji{font-size:48px;margin-bottom:16px}
+  h2{margin:0 0 8px;font-size:20px}
+  p{color:#64748b;font-size:14px;margin:0}
 </style></head><body>
 <div class="card">
-  <h2>Rate this job</h2>
-  <form method="POST" action="/rate" id="rateForm">
-    <input type="hidden" name="job_id" value="${jobId}">
-    <input type="hidden" name="sig" value="${sig}">
-    <input type="hidden" name="tags" id="tagsHidden" value="">
-
-    <label for="score">How relevant is this job? <span id="score-display" class="score-display"></span></label>
-    <input type="range" id="score" name="score" min="1" max="10" value="5"
-           oninput="updateScore(this.value)">
-
-    <div class="tag-group-label">Why pass? (optional)</div>
-    <div class="tag-pills" id="passGroup">
-      <span class="tag-pill" onclick="toggleTag(this)">Wrong field</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Too senior/junior</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Wrong location</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Postdoc</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Too quantitative</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Too qualitative</span>
-    </div>
-
-    <div class="tag-group-label">Why like? (optional)</div>
-    <div class="tag-pills" id="likeGroup">
-      <span class="tag-pill" onclick="toggleTag(this)">Great org</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Interesting topic</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Good methods fit</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Paid traineeship</span>
-      <span class="tag-pill" onclick="toggleTag(this)">Policy relevance</span>
-    </div>
-
-    <label for="reason" style="margin-top:14px">Optional note</label>
-    <textarea id="reason" name="reason" placeholder="Anything else?"></textarea>
-
-    <button type="submit" class="btn">Save rating</button>
-  </form>
+  <div class="emoji">✅</div>
+  <h2>Feedback saved</h2>
+  <p>Your detailed rating is saved to the scoring pipeline.</p>
 </div>
-<script>
-var selectedTags = [];
-
-function updateScore(v) {
-  v = parseInt(v);
-  var labels = ['','Not relevant','Not relevant','Not relevant',
-                'Possibly relevant','Possibly relevant','Possibly relevant',
-                'Strong match','Strong match','Strong match','Strong match'];
-  document.getElementById('score-display').textContent = v + '/10 — ' + labels[v];
-}
-updateScore(5);
-
-function toggleTag(el) {
-  var tag = el.textContent;
-  if (el.classList.contains('selected')) {
-    el.classList.remove('selected');
-    selectedTags = selectedTags.filter(function(t) { return t !== tag; });
-  } else {
-    el.classList.add('selected');
-    selectedTags.push(tag);
-  }
-  document.getElementById('tagsHidden').value = selectedTags.join('||');
-}
-</script>
 </body></html>`,
     { status: 200, headers: { "Content-Type": "text/html;charset=UTF-8" } }
+  );
+}
+
+function surveyErrorPage() {
+  return new Response(
+    `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Error</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       margin:0;display:flex;align-items:center;justify-content:center;
+       min-height:100vh;background:#f8fafc;color:#1e293b}
+  .card{background:#fff;border-radius:12px;padding:32px 24px;text-align:center;
+        max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  .emoji{font-size:48px;margin-bottom:16px}
+  h2{margin:0 0 8px;font-size:20px}
+  p{color:#64748b;font-size:14px;margin:0}
+</style></head><body>
+<div class="card">
+  <div class="emoji">⚠️</div>
+  <h2>Something went wrong</h2>
+  <p>Try again or open <strong>localhost:5001</strong> to rate this job.</p>
+</div>
+</body></html>`,
+    { status: 500, headers: { "Content-Type": "text/html;charset=UTF-8" } }
+  );
+}
+
+function expiredPage() {
+  return new Response(
+    `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Link expired</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       margin:0;display:flex;align-items:center;justify-content:center;
+       min-height:100vh;background:#f8fafc;color:#1e293b}
+  .card{background:#fff;border-radius:12px;padding:32px 24px;text-align:center;
+        max-width:360px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  .emoji{font-size:48px;margin-bottom:16px}
+  h2{margin:0 0 8px;font-size:20px}
+  p{color:#64748b;font-size:14px;margin:0}
+</style></head><body>
+<div class="card">
+  <div class="emoji">⏰</div>
+  <h2>Link expired</h2>
+  <p>Open <strong>localhost:5001</strong> to rate this job.</p>
+</div>
+</body></html>`,
+    { status: 403, headers: { "Content-Type": "text/html;charset=UTF-8" } }
   );
 }
 
@@ -189,6 +181,149 @@ function errorPage(status, msg) {
   );
 }
 
+function surveyPage(jobId, sig, title, org, originalAction) {
+  const jobHeader = title
+    ? `<div class="job-header">
+        <div class="job-title">${title}</div>
+        ${org ? `<div class="job-org">🏢 ${org}</div>` : ""}
+       </div>`
+    : "";
+
+  // GENERATED_CRITERIA_START — edit config/criteria.yaml + run scripts/generate_worker_form.py
+  const criteriaSliderHtml = `
+      <div class="criterion-row">
+        <div class="criterion-header">
+          <span class="criterion-label">Topic relevance</span>
+          <span class="criterion-val" id="val-topic_fit">3</span>
+        </div>
+        <input type="range" name="criteria_topic_fit" min="1" max="5" value="3"
+               aria-label="Topic relevance" aria-valuemin="1" aria-valuemax="5" aria-valuenow="3"
+               oninput="updateCriteria('topic_fit', this.value)">
+        <div class="criterion-hints"><span>1 — Wrong research area</span><span>5 — Core interest area</span></div>
+      </div>
+      <div class="criterion-row">
+        <div class="criterion-header">
+          <span class="criterion-label">Methods match</span>
+          <span class="criterion-val" id="val-methods_fit">3</span>
+        </div>
+        <input type="range" name="criteria_methods_fit" min="1" max="5" value="3"
+               aria-label="Methods match" aria-valuemin="1" aria-valuemax="5" aria-valuenow="3"
+               oninput="updateCriteria('methods_fit', this.value)">
+        <div class="criterion-hints"><span>1 — Methods I don't use</span><span>5 — Perfect methods match</span></div>
+      </div>
+      <div class="criterion-row">
+        <div class="criterion-header">
+          <span class="criterion-label">Organization appeal</span>
+          <span class="criterion-val" id="val-org_appeal">3</span>
+        </div>
+        <input type="range" name="criteria_org_appeal" min="1" max="5" value="3"
+               aria-label="Organization appeal" aria-valuemin="1" aria-valuemax="5" aria-valuenow="3"
+               oninput="updateCriteria('org_appeal', this.value)">
+        <div class="criterion-hints"><span>1 — Not interested in this org</span><span>5 — Dream organization</span></div>
+      </div>
+      <div class="criterion-row">
+        <div class="criterion-header">
+          <span class="criterion-label">Career stage fit</span>
+          <span class="criterion-val" id="val-career_fit">3</span>
+        </div>
+        <input type="range" name="criteria_career_fit" min="1" max="5" value="3"
+               aria-label="Career stage fit" aria-valuemin="1" aria-valuemax="5" aria-valuenow="3"
+               oninput="updateCriteria('career_fit', this.value)">
+        <div class="criterion-hints"><span>1 — Wrong level (e.g. postdoc)</span><span>5 — Perfect career stage</span></div>
+      </div>
+      <div class="criterion-row">
+        <div class="criterion-header">
+          <span class="criterion-label">Location</span>
+          <span class="criterion-val" id="val-location_fit">3</span>
+        </div>
+        <input type="range" name="criteria_location_fit" min="1" max="5" value="3"
+               aria-label="Location" aria-valuemin="1" aria-valuemax="5" aria-valuenow="3"
+               oninput="updateCriteria('location_fit', this.value)">
+        <div class="criterion-hints"><span>1 — Outside EU / unacceptable</span><span>5 — Ideal location</span></div>
+      </div>
+  `;
+  const criteriaKeys = ["topic_fit", "methods_fit", "org_appeal", "career_fit", "location_fit"];
+  // GENERATED_CRITERIA_END
+
+  return `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rate this job</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       margin:0;padding:20px;background:#f8fafc;color:#1e293b}
+  .card{background:#fff;border-radius:12px;padding:24px;max-width:480px;
+        margin:auto;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  .job-header{background:#f1f5f9;border-radius:8px;padding:12px 14px;margin-bottom:20px}
+  .job-title{font-size:15px;font-weight:600;color:#1e293b;margin:0 0 4px}
+  .job-org{font-size:13px;color:#64748b;margin:0}
+  h2{margin:0 0 16px;font-size:18px;color:#1e293b}
+  .criterion-row{margin-bottom:18px}
+  .criterion-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+  .criterion-label{font-size:14px;font-weight:600;color:#374151}
+  .criterion-val{font-size:14px;font-weight:bold;color:#2563eb}
+  input[type=range]{-webkit-appearance:none;width:100%;height:6px;border-radius:3px;
+                    background:#e2e8f0;outline:none;cursor:pointer;
+                    padding:12px 0;box-sizing:content-box;display:block}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;
+    border-radius:50%;background:#2563eb;cursor:pointer}
+  input[type=range]::-moz-range-thumb{width:32px;height:32px;border-radius:50%;
+    background:#2563eb;cursor:pointer;border:none}
+  .criterion-hints{display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-top:2px}
+  .derived-score{font-size:16px;font-weight:bold;color:#1a1a2e;margin:16px 0 8px}
+  .applied-row{display:flex;align-items:center;min-height:44px;padding:4px 0;
+               margin-bottom:12px;cursor:pointer;gap:10px}
+  .applied-row input[type=checkbox]{width:20px;height:20px;cursor:pointer;
+                                    accent-color:#16a34a;flex-shrink:0}
+  .applied-row span{font-size:14px;color:#374151}
+  label.comment-label{display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:4px}
+  textarea{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;
+           border-radius:6px;font-size:14px;resize:vertical;min-height:70px;margin-top:4px}
+  .btn{display:block;width:100%;min-height:48px;padding:14px;background:#2563eb;color:#fff;
+       border:none;border-radius:6px;font-size:16px;font-weight:600;cursor:pointer;margin-top:16px}
+  .btn:hover{background:#1d4ed8}
+</style></head><body>
+<div class="card">
+  ${jobHeader}
+  <h2>Rate this job</h2>
+  <form method="POST" action="/survey" id="surveyForm">
+    <input type="hidden" name="job_id" value="${jobId}">
+    <input type="hidden" name="sig" value="${sig}">
+    <input type="hidden" name="original_action" value="${originalAction}">
+    ${criteriaSliderHtml}
+    <div class="derived-score" id="derived-score">Score: 6 / 10</div>
+    <label class="applied-row">
+      <input type="checkbox" name="applied" value="1" id="applied-check">
+      <span>I applied for this job ✅</span>
+    </label>
+    <label class="comment-label" for="comment">Optional note</label>
+    <textarea id="comment" name="comment" placeholder="Anything else?"></textarea>
+    <button type="submit" class="btn">Submit feedback</button>
+  </form>
+</div>
+<script>
+var criteriaKeys = ${JSON.stringify(criteriaKeys)};
+function updateCriteria(key, val) {
+  val = parseInt(val);
+  document.getElementById('val-' + key).textContent = val;
+  var el = document.querySelector('[name="criteria_' + key + '"]');
+  if (el) el.setAttribute('aria-valuenow', val);
+  updateScore();
+}
+function updateScore() {
+  var total = 0;
+  criteriaKeys.forEach(function(k) {
+    var el = document.querySelector('[name="criteria_' + k + '"]');
+    if (el) total += parseInt(el.value);
+  });
+  var score = Math.round(total / criteriaKeys.length * 2);
+  document.getElementById('derived-score').textContent = 'Score: ' + score + ' / 10';
+}
+updateScore();
+</script>
+</body></html>`;
+}
+
 // ── Request handler ───────────────────────────────────────────────────────────
 
 export default {
@@ -197,9 +332,9 @@ export default {
     const path = url.pathname;
     const params = url.searchParams;
     const secret = env.CF_WORKER_SECRET;
-    const kv = env.FEEDBACK_KV;
+    const flaskUrl = (env.FLASK_API_URL || "").replace(/\/$/, "");
 
-    // GET /feedback — rating row tap, legacy like/pass, or source suggestion skip
+    // GET /feedback — rating row pill tap, legacy like/pass, or source suggestion skip
     if (request.method === "GET" && path === "/feedback") {
       const jobId = params.get("job_id") || "";
       const sig = params.get("sig") || "";
@@ -211,13 +346,15 @@ export default {
       if (action === "skip_suggestion" && suggestionId) {
         if (!sig) return errorPage(400, "Missing parameters.");
         if (!(await verifyActionSig(secret, suggestionId, "skip_suggestion", sig))) {
-          return errorPage(403, "Link expired or invalid. Use a fresh email.");
+          return expiredPage();
         }
-        await kv.put(
-          `skip:${suggestionId}`,
-          JSON.stringify({ suggestion_id: parseInt(suggestionId, 10), action: "skip_suggestion", ts: new Date().toISOString() }),
-          { expirationTtl: KV_TTL }
-        );
+        if (!flaskUrl) return errorPage(500, "Flask API URL not configured.");
+        try {
+          await postToFlask(flaskUrl, secret, "/api/v1/skip-suggestion",
+            { suggestion_id: parseInt(suggestionId, 10) });
+        } catch (e) {
+          console.error(`[skip-suggestion] Flask call failed: ${e}`);
+        }
         return new Response(
           `<!DOCTYPE html><html><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -241,118 +378,104 @@ h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style
       let resolvedAction = action;
 
       if (scoreRaw !== null) {
-        // Rating row path — action is "rate" (signed), score is unsigned param
         score = Math.max(1, Math.min(10, parseInt(scoreRaw, 10) || 5));
         resolvedAction = score >= 7 ? "like" : "pass";
         if (!jobId || !sig) return errorPage(400, "Missing parameters.");
         if (!(await verifyActionSig(secret, jobId, "rate", sig))) {
-          return errorPage(403, "Link expired or invalid. Use a fresh email.");
+          return expiredPage();
         }
       } else {
-        // Legacy like/pass button path
         if (!jobId || !["like", "pass"].includes(resolvedAction) || !sig) {
           return errorPage(400, "Missing or invalid parameters.");
         }
         if (!(await verifyActionSig(secret, jobId, resolvedAction, sig))) {
-          return errorPage(403, "Link expired or invalid. Use a fresh email.");
+          return expiredPage();
         }
       }
 
-      await kv.put(
-        `feedback:${jobId}`,
-        JSON.stringify({ job_id: jobId, action: resolvedAction, score, reason: "", ts: new Date().toISOString() }),
-        { expirationTtl: KV_TTL }
-      );
+      if (!flaskUrl) return errorPage(500, "Flask API URL not configured.");
+      try {
+        const resp = await postToFlask(flaskUrl, secret, "/api/v1/feedback",
+          { job_id: jobId, action: resolvedAction, score });
+        if (!resp.ok) {
+          console.error(`[feedback] Flask error: ${resp.status}`);
+        }
+      } catch (e) {
+        console.error(`[feedback] Flask call failed: ${e}`);
+      }
       return thanksPage(resolvedAction, score);
     }
 
-    // GET /rate — serve mobile rating form
-    if (request.method === "GET" && path === "/rate") {
+    // GET /survey or GET /rate — serve mobile criteria form
+    if (request.method === "GET" && (path === "/survey" || path === "/rate")) {
       const jobId = params.get("job_id") || "";
       const sig = params.get("sig") || "";
+      const title = decodeURIComponent(params.get("title") || "");
+      const org = decodeURIComponent(params.get("org") || "");
+      const originalAction = path === "/rate" ? "rate" : "survey";
 
-      if (!jobId || !sig) {
-        return errorPage(400, "Missing parameters.");
+      if (!jobId || !sig) return errorPage(400, "Missing parameters.");
+      if (!(await verifyActionSig(secret, jobId, originalAction, sig))) {
+        return expiredPage();
       }
-      // Rate links are signed as action="rate"
-      if (!(await verifyActionSig(secret, jobId, "rate", sig))) {
-        return errorPage(403, "Link expired or invalid. Use a fresh email.");
-      }
-      return ratePage(jobId, sig);
+      return new Response(surveyPage(jobId, sig, title, org, originalAction),
+        { status: 200, headers: { "Content-Type": "text/html;charset=UTF-8" } });
     }
 
-    // POST /rate — submit rating form
-    if (request.method === "POST" && path === "/rate") {
+    // POST /survey — submit criteria form
+    if (request.method === "POST" && path === "/survey") {
       let body;
       try {
         body = await request.formData();
       } catch {
         return errorPage(400, "Invalid form data.");
       }
+
       const jobId = body.get("job_id") || "";
       const sig = body.get("sig") || "";
-      const scoreRaw = parseInt(body.get("score") || "5", 10);
-      const reason = (body.get("reason") || "").trim().slice(0, 500);
-      const score = Math.max(1, Math.min(10, isNaN(scoreRaw) ? 5 : scoreRaw));
-      const action = score >= 7 ? "like" : "pass";
-      const tagsRaw = (body.get("tags") || "").trim();
-      const tags = tagsRaw ? tagsRaw.split("||").map(t => t.trim()).filter(Boolean) : [];
+      const originalAction = body.get("original_action") || "survey";
+      const comment = (body.get("comment") || "").trim().slice(0, 1000);
+      const applied = body.get("applied") === "1";
 
-      if (!jobId || !sig) {
-        return errorPage(400, "Missing parameters.");
+      if (!jobId || !sig) return errorPage(400, "Missing parameters.");
+      if (!["survey", "rate"].includes(originalAction)) {
+        return errorPage(400, "Invalid action.");
       }
-      if (!(await verifyActionSig(secret, jobId, "rate", sig))) {
-        return errorPage(403, "Link expired or invalid. Use a fresh email.");
+      if (!(await verifyActionSig(secret, jobId, originalAction, sig))) {
+        return expiredPage();
       }
 
-      await kv.put(
-        `feedback:${jobId}`,
-        JSON.stringify({ job_id: jobId, action, score, reason, tags, ts: new Date().toISOString() }),
-        { expirationTtl: KV_TTL }
-      );
-      return thanksPage(action, score);
-    }
-
-    // GET /poll — return all pending KV entries (feedback: and skip: prefixes)
-    if (request.method === "GET" && path === "/poll") {
-      const auth = request.headers.get("Authorization") || "";
-      if (auth !== `Bearer ${secret}`) {
-        return new Response("Unauthorized", { status: 401 });
+      // Parse criteria values (1–5 each)
+      const criteria = {};
+      const keys = ["topic_fit", "methods_fit", "org_appeal", "career_fit", "location_fit"];
+      for (const k of keys) {
+        const raw = parseInt(body.get(`criteria_${k}`) || "3", 10);
+        criteria[k] = Math.max(1, Math.min(5, isNaN(raw) ? 3 : raw));
       }
 
-      const [fbList, skipList] = await Promise.all([
-        kv.list({ prefix: "feedback:" }),
-        kv.list({ prefix: "skip:" }),
-      ]);
-      const allKeys = [...fbList.keys, ...skipList.keys];
-      const entries = [];
-      for (const key of allKeys) {
-        const val = await kv.get(key.name, { type: "json" });
-        if (val) entries.push(val);
-      }
-      return new Response(JSON.stringify(entries), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+      // Derive score: avg(criteria) × 2 → 2–10 range
+      const avg = Object.values(criteria).reduce((s, v) => s + v, 0) / keys.length;
+      const derivedScore = applied ? 10 : Math.max(1, Math.min(10, Math.round(avg * 2)));
+      const action = applied ? "applied" : (derivedScore >= 7 ? "like" : "pass");
 
-    // DELETE /poll — remove all feedback and skip entries after successful sync
-    if (request.method === "DELETE" && path === "/poll") {
-      const auth = request.headers.get("Authorization") || "";
-      if (auth !== `Bearer ${secret}`) {
-        return new Response("Unauthorized", { status: 401 });
+      if (!flaskUrl) return surveyErrorPage();
+      try {
+        const resp = await postToFlask(flaskUrl, secret, "/api/v1/feedback", {
+          job_id: jobId,
+          action,
+          derived_score: derivedScore,
+          criteria,
+          comment,
+        });
+        if (!resp.ok) {
+          console.error(`[survey POST] Flask error: ${resp.status}`);
+          return surveyErrorPage();
+        }
+      } catch (e) {
+        console.error(`[survey POST] Flask call failed: ${e}`);
+        return surveyErrorPage();
       }
-
-      const [fbList, skipList] = await Promise.all([
-        kv.list({ prefix: "feedback:" }),
-        kv.list({ prefix: "skip:" }),
-      ]);
-      const allKeys = [...fbList.keys, ...skipList.keys];
-      await Promise.all(allKeys.map(k => kv.delete(k.name)));
-      return new Response(JSON.stringify({ deleted: allKeys.length }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return surveyThanksPage();
     }
 
     return errorPage(404, "Not found.");

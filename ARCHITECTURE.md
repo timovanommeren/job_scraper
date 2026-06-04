@@ -106,10 +106,14 @@ feedback/server.py  (Task Scheduler → at logon, always-on)
   ├── feedback/store.py →  feedback/feedback_store.json
   └── feedback/profile_updater.py            (email footer HTML)
 
-feedback/cf_sync.py  (Task Scheduler → every hour)
-  ├── cloudflare/worker/index.js  [deployed to Cloudflare — GET /poll, DELETE /poll]
-  ├── db/dedup.py       →  db/jobs.db        (job metadata lookup + feedback write + skip write)
-  └── feedback/store.py →  feedback/feedback_store.json
+cloudflare/worker/index.js  (deployed to Cloudflare Workers)
+  └── feedback/server.py  [via FLASK_API_URL Cloudflare Tunnel → POST /api/v1/feedback, /api/v1/skip-suggestion]
+
+feedback/cf_sync.py  (Task Scheduler → every hour — legacy; no-op once KV namespace is deleted)
+  └── (previously polled Cloudflare KV; KV binding removed in Architecture C migration)
+
+scripts/generate_worker_form.py  (run by wrangler deploy via [build] hook)
+  └── config/criteria.yaml  →  cloudflare/worker/index.js  (regenerates criteria slider HTML)
 ```
 
 
@@ -550,13 +554,15 @@ The `JobScraperFeedbackServer` Windows Task Scheduler task runs `pythonw.exe fee
 |---|---|---|
 | `GET` | `/` | Redirect to `/jobs` |
 | `GET` | `/jobs` | Paginated job list; accepts `?tier=strong_match\|maybe\|not_relevant\|all` and `?page=N` |
-| `GET` | `/jobs/<id>` | Job detail page with score/tags/snippet + feedback form (overall slider + 5 criterion sliders) |
-| `POST` | `/jobs/<id>/feedback` | Submit feedback; writes to both SQLite `feedback` table and `feedback_store.json` |
+| `GET` | `/jobs/<id>` | Job detail page with score/tags/snippet + feedback form (5 criterion sliders). Accepts `?feedback=error` for write-fail banner. |
+| `POST` | `/jobs/<id>/feedback` | Submit feedback; writes to both SQLite `feedback` table and `feedback_store.json`. On SQLite failure redirects back with `?feedback=error` banner. |
 | `GET` | `/feedback` | Paginated history of all submitted feedback |
 | `GET` | `/fb` | Email button compat: `?id=N` → redirect to `/jobs/N` |
 | `GET` | `/comment_form` | Legacy compat: redirects to `/jobs/<id>` |
 | `POST` | `/comment` | Legacy compat: writes JSON feedback, redirects |
 | `GET` | `/skip-suggestion` | Desktop fallback: `?id=N` → marks source suggestion as `skipped` in DB; returns 404 if ID not found. Mobile links use CF Worker instead. |
+| `POST` | `/api/v1/feedback` | **CF Worker endpoint** — accepts feedback JSON from Cloudflare Worker; secured by `Authorization: Bearer <CF_WORKER_SECRET>`. Writes criteria + score directly to SQLite and feedback_store.json. |
+| `POST` | `/api/v1/skip-suggestion` | **CF Worker endpoint** — accepts `{suggestion_id}` from Cloudflare Worker; secured by Bearer token. Marks suggestion as skipped in DB. |
 | `GET` | `/health` | Returns `"OK", 200` — used to test if server is running |
 
 ### Tier filter implementation
@@ -630,9 +636,11 @@ If `_smtp_send()` raises, `save_fallback_html()` writes the full digest HTML to 
 
 ### How feedback is submitted
 
-**From email (1–10 rating row):** Each job card in the daily and weekly digest contains a rating row — two rows of 5 pills numbered 1–10. Each pill is a signed HMAC link that goes directly to the Cloudflare Worker `/feedback` route with `?score=N`. Tapping a pill records the score without loading a form. CF Worker derives action from score (≥7 → like, <7 → pass) and stores `{job_id, action, score, reason, ts}` in KV under the `feedback:{job_id}` key prefix. `cf_sync.py` polls the Worker hourly and writes the result to both SQLite and `feedback_store.json`. HMAC uses a 7-day weekly bucket (`int(time.time()) // 604800`) — links are valid for the full week the email was sent.
+**From email (1–10 rating row):** Each job card in the daily and weekly digest contains a rating row — two rows of 5 pills numbered 1–10. Each pill is a signed HMAC link that goes directly to the Cloudflare Worker `/feedback` route with `?score=N`. Tapping a pill records the score without loading a form. CF Worker derives action from score (≥7 → like, <7 → pass) and POSTs `{job_id, action, score}` directly to Flask's `/api/v1/feedback` via the Cloudflare Tunnel (`FLASK_API_URL`). Flask writes the result to SQLite and `feedback_store.json` in real time (no polling lag). HMAC uses a 7-day weekly bucket (`int(time.time()) // 604800`) — links are valid for the full week the email was sent.
 
-**From email (skip-suggestion link):** Each source suggestion card in the weekly digest contains a "Skip" link signed with HMAC (`action=skip_suggestion`). Tapping it stores `{suggestion_id, action, ts}` in KV under the `skip:{suggestion_id}` key prefix. `cf_sync.py` handles this action type separately: it writes `status='skipped'` to the `source_suggestions` table (no feedback store write). Desktop fallback: `/skip-suggestion?id=N` Flask route.
+**From email (→ Rate in detail link):** Each job card contains a `→ Rate in detail` link signed with HMAC (`action="survey"`). Tapping it opens the CF Worker `/survey` route, which serves a mobile-friendly form with 5 criteria sliders (Topic relevance, Methods match, Organization appeal, Career stage fit, Location). The form also shows the job title and org (passed as URL params, URL-encoded, capped at 60/40 chars). POSTing the form sends `{job_id, criteria: {...}, comment, derived_score}` to Flask `/api/v1/feedback`. Derived score formula: `round(avg(criteria_values) * 2)`. Old `/rate` links from prior emails still work — CF Worker serves the same survey form, verifying with action="rate".
+
+**From email (skip-suggestion link):** Each source suggestion card in the weekly digest contains a "Skip" link signed with HMAC (`action=skip_suggestion`). Tapping it POSTs `{suggestion_id}` directly to Flask's `/api/v1/skip-suggestion` via the Cloudflare Tunnel. Flask writes `status='skipped'` to the `source_suggestions` table. Desktop fallback: `/skip-suggestion?id=N` Flask route.
 
 **From Flask (full form):** User goes to `http://localhost:5001/jobs/<id>` → full feedback form.
 
@@ -724,6 +732,8 @@ job_scraper/
 │                                 #   + backfill_deadlines() for retroactive deadline extraction
 │
 ├── config/
+│   ├── criteria.yaml             # AUTHORITATIVE CRITERIA definition (5 sliders); read by server.py at startup
+│   │                             #   and by scripts/generate_worker_form.py to regenerate index.js form HTML
 │   ├── profile.yaml              # AUTHORITATIVE scoring system prompt + Timo's profile
 │   └── settings.yaml            # Runtime config: scraper limits, score thresholds, logging
 │
@@ -738,7 +748,8 @@ job_scraper/
 ├── feedback/
 │   ├── __init__.py
 │   ├── .server.pid               # PID file written by server.py at startup (runtime artifact)
-│   ├── cf_sync.py                # Hourly poll: Cloudflare KV → SQLite + feedback_store.json
+│   ├── cf_sync.py                # Legacy: Cloudflare KV poll → SQLite. KV removed (Architecture C);
+│   │                             #   will no-op gracefully once KV namespace deleted from CF dashboard.
 │   ├── feedback_store.json       # Flat JSON log of like/pass actions (for prompt calibration)
 │   ├── profile_updater.py        # generate_prompt_additions() + build_feedback_footer_html()
 │   │                             #   + update_liked_organizations() (writes liked_organizations to profile.yaml)

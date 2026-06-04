@@ -1,0 +1,26 @@
+# config/criteria.yaml — Authoritative CRITERIA definition
+# Edit this file, then run: python scripts/generate_worker_form.py
+# This regenerates the survey form HTML in cloudflare/worker/index.js.
+# Never edit the form HTML in index.js directly.
+
+criteria:
+  - key: topic_fit
+    label: "Topic relevance"
+    hint_low: "Wrong research area"
+    hint_high: "Core interest area"
+  - key: methods_fit
+    label: "Methods match"
+    hint_low: "Methods I don't use"
+    hint_high: "Perfect methods match"
+  - key: org_appeal
+    label: "Organization appeal"
+    hint_low: "Not interested in this org"
+    hint_high: "Dream organization"
+  - key: career_fit
+    label: "Career stage fit"
+    hint_low: "Wrong level (e.g. postdoc)"
+    hint_high: "Perfect career stage"
+  - key: location_fit
+    label: "Location"
+    hint_low: "Outside EU / unacceptable"
+    hint_high: "Ideal location"

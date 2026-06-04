@@ -20,18 +20,18 @@ logger = logging.getLogger(__name__)
 FEEDBACK_BASE = "http://localhost:5001"
 
 
-def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> str:
+def _feedback_action_url(job_id: str, action: str, score: int | None = None,
+                          title: str | None = None, org: str | None = None) -> str:
     """
-    Return a signed Cloudflare Worker URL for the given like/pass/rate action.
+    Return a signed Cloudflare Worker URL for the given action.
     Falls back to the localhost Flask URL when CF_WORKER_URL is not configured.
 
-    action values: "like", "pass", "rate"
+    action values: "like", "pass", "rate" (pill), "survey" (full criteria form)
     HMAC uses a 7-day weekly bucket so links are valid for the full week.
     """
     cf_url = os.getenv("CF_WORKER_URL", "").rstrip("/")
     secret = os.getenv("CF_WORKER_SECRET", "")
     if not cf_url or not secret:
-        # Fallback: existing localhost /fb route (desktop only)
         return f"{FEEDBACK_BASE}/fb?id={job_id}&a={action}"
 
     day_bucket = int(time.time()) // 604800
@@ -42,8 +42,18 @@ def _feedback_action_url(job_id: str, action: str, score: int | None = None) -> 
         if score is not None:
             # Rating row pill: direct score recording at /feedback (no form shown)
             return f"{cf_url}/feedback?job_id={job_id}&sig={sig}&score={score}"
-        # Old "Rate" button: open slider form at /rate
-        return f"{cf_url}/rate?job_id={job_id}&sig={sig}"
+        # Pill row without score — shouldn't happen; fall through to feedback route
+        return f"{cf_url}/feedback?job_id={job_id}&sig={sig}"
+
+    if action == "survey":
+        # Full criteria form — embed title+org so mobile form shows job context
+        url = f"{cf_url}/survey?job_id={job_id}&sig={sig}"
+        if title:
+            url += f"&title={urlquote((title or '')[:60])}"
+        if org:
+            url += f"&org={urlquote((org or '')[:40])}"
+        return url
+
     return f"{cf_url}/feedback?job_id={job_id}&action={action}&sig={sig}"
 
 
@@ -203,7 +213,9 @@ def job_html(job: sqlite3.Row) -> str:
 
     row1 = "".join(_pill(n) for n in range(1, 6))
     row2 = "".join(_pill(n) for n in range(6, 11))
-    full_feedback_url = _feedback_action_url(jid, "rate")
+    full_feedback_url = _feedback_action_url(
+        jid, "survey", title=job["title"], org=job["organization"]
+    )
     rating_row = (
         '<div style="margin-top:10px">'
         '<div style="font-size:11px;color:#9ca3af;margin-bottom:4px">'
@@ -212,7 +224,7 @@ def job_html(job: sqlite3.Row) -> str:
         f'<div>{row2}</div>'
         f'<div style="margin-top:6px;font-size:11px">'
         f'<a href="{full_feedback_url}" style="color:#9ca3af;text-decoration:none">'
-        'Full feedback (tags + note) &#8594;</a></div>'
+        '&#8594; Rate in detail</a></div>'
         '</div>'
     )
 
@@ -238,7 +250,7 @@ def job_html(job: sqlite3.Row) -> str:
   <div style="margin-top:8px">
     <a href="{apply_url}"
        style="background:#2563eb;color:#fff;padding:6px 14px;border-radius:4px;text-decoration:none;font-size:13px">
-      → Apply
+      → View job
     </a>
   </div>
   {rating_row}

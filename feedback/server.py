@@ -23,21 +23,37 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import unquote
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from flask import Flask, request, render_template_string, redirect, url_for, g
+from flask import Flask, request, render_template_string, redirect, url_for, g, jsonify
 
 app = Flask(__name__)
 log = logging.getLogger("feedback_server")
 
-# Per-criterion sliders — (key, label, hint_low, hint_high)
-CRITERIA = [
-    ("topic_fit",    "Topic relevance",     "Wrong research area",         "Core interest area"),
-    ("methods_fit",  "Methods match",        "Methods I don't use",         "Perfect methods match"),
-    ("org_appeal",   "Organization appeal",  "Not interested in this org",  "Dream organization"),
-    ("career_fit",   "Career stage fit",     "Wrong level (e.g. postdoc)",  "Perfect career stage"),
-    ("location_fit", "Location",             "Outside EU / unacceptable",   "Ideal location"),
-]
+
+def _load_criteria():
+    """Load CRITERIA from config/criteria.yaml. Falls back to inline list on error."""
+    try:
+        path = Path(__file__).parent.parent / "config" / "criteria.yaml"
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return [(c["key"], c["label"], c["hint_low"], c["hint_high"])
+                for c in data["criteria"]]
+    except Exception:
+        log.warning("Could not load config/criteria.yaml; using inline fallback")
+        return [
+            ("topic_fit",    "Topic relevance",     "Wrong research area",        "Core interest area"),
+            ("methods_fit",  "Methods match",        "Methods I don't use",        "Perfect methods match"),
+            ("org_appeal",   "Organization appeal",  "Not interested in this org", "Dream organization"),
+            ("career_fit",   "Career stage fit",     "Wrong level (e.g. postdoc)", "Perfect career stage"),
+            ("location_fit", "Location",             "Outside EU / unacceptable",  "Ideal location"),
+        ]
+
+
+# Per-criterion sliders — loaded from config/criteria.yaml at startup
+CRITERIA = _load_criteria()
 
 PAGE_SIZE = 20
 
@@ -68,8 +84,8 @@ def _close_db(exc):
 
 def _write_feedback_sqlite(job_id: str, relevance_score: int,
                             tags: list | None, comment: str,
-                            criteria: dict | None = None) -> None:
-    """Upsert into the SQLite feedback table."""
+                            criteria: dict | None = None) -> bool:
+    """Upsert into the SQLite feedback table. Returns True on success, False on failure."""
     conn = _get_db()
     try:
         conn.execute("DELETE FROM feedback WHERE job_id = ?", (job_id,))
@@ -82,8 +98,10 @@ def _write_feedback_sqlite(job_id: str, relevance_score: int,
              json.dumps(criteria) if criteria else None),
         )
         conn.commit()
+        return True
     except Exception:
         log.exception(f"SQLite feedback write failed for job_id={job_id}")
+        return False
 
 
 def _write_feedback_json(job_id: str, url: str, title: str, org: str,
@@ -419,8 +437,17 @@ def job_detail(job_id: int):
       </div>
     </div>"""
 
-    body = f"""<a class="detail-back" href="/jobs">← Back to all jobs</a>
+    error_banner_html = ""
+    if request.args.get("feedback") == "error":
+        error_banner_html = (
+            '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;'
+            'padding:10px 14px;font-size:13px;color:#dc2626;margin-bottom:12px">'
+            '⚠️ Write failed — please try again.'
+            '</div>'
+        )
 
+    body = f"""<a class="detail-back" href="/jobs">← Back to all jobs</a>
+{error_banner_html}
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
     <h2 style="margin:0">{job['title'] or '—'}</h2>
@@ -522,7 +549,10 @@ def submit_feedback(job_id: int):
         action = "like" if relevance_score >= 7 else "pass"
 
     # Write to SQLite (authoritative)
-    _write_feedback_sqlite(str(job_id), relevance_score, tags=None, comment=comment, criteria=criteria)
+    ok = _write_feedback_sqlite(str(job_id), relevance_score, tags=None, comment=comment, criteria=criteria)
+    if not ok:
+        log.error(f"Feedback write failed: job_id={job_id}")
+        return redirect(url_for("job_detail", job_id=job_id, feedback="error"))
 
     # Write to JSON store (for profile_updater prompt additions)
     _write_feedback_json(
@@ -670,6 +700,87 @@ def skip_suggestion():
     if result.rowcount == 0:
         return "Suggestion not found", 404
     return "Skipped. You won't see this suggestion again.", 200
+
+
+@app.route("/api/v1/feedback", methods=["POST"])
+def api_feedback():
+    """Accept feedback POST from CF Worker (mobile). Secured by Bearer token = CF_WORKER_SECRET."""
+    secret = os.environ.get("CF_WORKER_SECRET", "")
+    if not secret:
+        return jsonify({"error": "CF_WORKER_SECRET not configured"}), 500
+    if request.headers.get("Authorization", "") != f"Bearer {secret}":
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    job_id = str(data.get("job_id", "")).strip()
+    action = data.get("action", "pass")
+    score_raw = data.get("score") if data.get("score") is not None else data.get("derived_score")
+    criteria = data.get("criteria") if isinstance(data.get("criteria"), dict) else None
+    comment = (data.get("comment") or "").strip()
+
+    if not job_id:
+        return jsonify({"error": "Missing job_id"}), 400
+
+    if score_raw is not None:
+        try:
+            relevance_score = max(1, min(10, int(score_raw)))
+        except (ValueError, TypeError):
+            relevance_score = {"like": 8, "pass": 2}.get(action, 5)
+    else:
+        relevance_score = {"like": 8, "pass": 2}.get(action, 5)
+
+    conn = _get_db()
+    job = conn.execute(
+        "SELECT url, title, organization FROM jobs WHERE id = ?", (job_id,)
+    ).fetchone()
+    if job is None:
+        return jsonify({"error": f"job_id {job_id} not found"}), 404
+
+    ok = _write_feedback_sqlite(job_id, relevance_score, tags=None, comment=comment, criteria=criteria)
+    if not ok:
+        return jsonify({"error": "Write failed"}), 500
+
+    _write_feedback_json(
+        job_id, job["url"] or "", job["title"] or "",
+        job["organization"] or "", relevance_score, action, comment,
+        tags=None, criteria=criteria,
+    )
+
+    try:
+        from feedback.profile_updater import update_liked_organizations
+        update_liked_organizations()
+    except Exception:
+        log.warning("update_liked_organizations failed — continuing")
+
+    log.info(f"[api] CF feedback: job_id={job_id} score={relevance_score} action={action} criteria={criteria is not None}")
+    return jsonify({"status": "ok", "score": relevance_score}), 200
+
+
+@app.route("/api/v1/skip-suggestion", methods=["POST"])
+def api_skip_suggestion():
+    """Accept skip-suggestion POST from CF Worker. Secured by Bearer token = CF_WORKER_SECRET."""
+    from datetime import datetime
+    secret = os.environ.get("CF_WORKER_SECRET", "")
+    if not secret:
+        return jsonify({"error": "CF_WORKER_SECRET not configured"}), 500
+    if request.headers.get("Authorization", "") != f"Bearer {secret}":
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    suggestion_id = data.get("suggestion_id")
+    if not suggestion_id:
+        return jsonify({"error": "Missing suggestion_id"}), 400
+
+    db = _get_db()
+    result = db.execute(
+        "UPDATE source_suggestions SET status='skipped', skipped_at=? WHERE id=?",
+        (datetime.utcnow().isoformat(), suggestion_id),
+    )
+    db.commit()
+    if result.rowcount == 0:
+        return jsonify({"error": "Suggestion not found"}), 404
+    log.info(f"[api] CF skip suggestion: suggestion_id={suggestion_id}")
+    return jsonify({"status": "ok"}), 200
 
 
 @app.route("/health")
