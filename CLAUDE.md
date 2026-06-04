@@ -39,6 +39,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 ### Local Interfaces
 
 - Flask job browser: `http://localhost:5001` (auto-starts at Windows logon)
+- Settings page: `http://localhost:5001/settings` — edit pipeline parameters without touching YAML files
 - Health check: `http://localhost:5001/health`
 
 ### Most Critical Rules (full list in NEVER Rules section)

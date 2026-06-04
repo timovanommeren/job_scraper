@@ -563,6 +563,8 @@ The `JobScraperFeedbackServer` Windows Task Scheduler task runs `pythonw.exe fee
 | `GET` | `/skip-suggestion` | Desktop fallback: `?id=N` → marks source suggestion as `skipped` in DB; returns 404 if ID not found. Mobile links use CF Worker instead. |
 | `POST` | `/api/v1/feedback` | **CF Worker endpoint** — accepts feedback JSON from Cloudflare Worker; secured by `Authorization: Bearer <CF_WORKER_SECRET>`. Writes criteria + score directly to SQLite and feedback_store.json. |
 | `POST` | `/api/v1/skip-suggestion` | **CF Worker endpoint** — accepts `{suggestion_id}` from Cloudflare Worker; secured by Bearer token. Marks suggestion as skipped in DB. |
+| `GET` | `/settings` | Settings page — renders form with current `config/settings.yaml` values; corrupt YAML shows error-only page (no form) |
+| `POST` | `/settings` | Save settings — validates 6 parameters, updates `config/settings.yaml` in-place (atomic write), redirects to `?saved=1` |
 | `GET` | `/health` | Returns `"OK", 200` — used to test if server is running |
 
 ### Tier filter implementation

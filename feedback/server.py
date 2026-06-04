@@ -55,6 +55,8 @@ def _load_criteria():
 # Per-criterion sliders — loaded from config/criteria.yaml at startup
 CRITERIA = _load_criteria()
 
+_SETTINGS_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
+
 PAGE_SIZE = 20
 
 
@@ -214,6 +216,7 @@ _NAV = """<nav>
   <a href="/jobs?tier=strong_match">Strong</a>
   <a href="/jobs?tier=maybe">Maybe</a>
   <a href="/feedback">Feedback</a>
+  <a href="/settings">⚙ Settings</a>
 </nav>"""
 
 
@@ -231,22 +234,32 @@ def index():
     return redirect(url_for("job_list"))
 
 
+def _load_strong_threshold() -> int:
+    """Load strong_match_threshold from settings.yaml; fallback to 8 if unreadable."""
+    try:
+        cfg = yaml.safe_load(_SETTINGS_PATH.read_text(encoding="utf-8"))
+        return int(cfg.get("filtering", {}).get("strong_match_threshold", 8))
+    except Exception:
+        return 8
+
+
 @app.route("/jobs")
 def job_list():
-    conn   = _get_db()
-    tier   = request.args.get("tier", "all")
-    page   = max(1, int(request.args.get("page", 1)))
-    offset = (page - 1) * PAGE_SIZE
+    conn      = _get_db()
+    tier      = request.args.get("tier", "all")
+    page      = max(1, int(request.args.get("page", 1)))
+    offset    = (page - 1) * PAGE_SIZE
+    threshold = _load_strong_threshold()
 
     # Filter by raw score, not tier label — keeps UI in sync after any
     # scoring-prompt changes that might relabel existing rows.
-    # Boundaries mirror extractor_scorer.py + settings.yaml: strong >= 8, maybe 5–7, low <= 4.
+    # Boundaries: strong >= strong_match_threshold (from settings.yaml), maybe 5–(threshold-1), low <= 4.
     where = ""
     params: list = []
     if tier == "strong_match":
-        where  = "WHERE relevance_score >= 8"
+        where  = f"WHERE relevance_score >= {threshold}"
     elif tier == "maybe":
-        where  = "WHERE relevance_score >= 5 AND relevance_score < 8"
+        where  = f"WHERE relevance_score >= 5 AND relevance_score < {threshold}"
     elif tier == "not_relevant":
         where  = "WHERE relevance_score <= 4"
 
@@ -270,8 +283,8 @@ def job_list():
     # Filter bar
     filters = [
         ("all",          "All", tier == "all"),
-        ("strong_match", "Strong ≥8", tier == "strong_match"),
-        ("maybe",        "Maybe 5–7", tier == "maybe"),
+        ("strong_match", f"Strong ≥{threshold}", tier == "strong_match"),
+        ("maybe",        f"Maybe 5–{threshold - 1}", tier == "maybe"),
         ("not_relevant", "Low ≤4",    tier == "not_relevant"),
     ]
     filter_html = '<div class="filter-bar">' + "".join(
@@ -781,6 +794,183 @@ def api_skip_suggestion():
         return jsonify({"error": "Suggestion not found"}), 404
     log.info(f"[api] CF skip suggestion: suggestion_id={suggestion_id}")
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    error = None
+    saved = request.args.get("saved") == "1"
+
+    # Load current config — error-only page if YAML is unreadable
+    try:
+        config = yaml.safe_load(_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        body = (
+            f'<h2>Settings</h2>'
+            f'<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;'
+            f'padding:14px 18px;color:#991b1b;margin-top:16px">'
+            f'⚠ <strong>settings.yaml unreadable</strong><br><code>{exc}</code><br>'
+            f'Fix the file manually, then reload this page.'
+            f'</div>'
+        )
+        return _page_html("Settings", body)
+
+    if request.method == "POST":
+        try:
+            smt = int(request.form["strong_match_threshold"])
+            mt  = int(request.form["maybe_threshold"])
+            ems = int(request.form["email_also_min_score"])
+            sno = request.form.get("send_if_no_new_jobs") == "1"
+            mje = int(request.form["max_jobs_in_email"])
+            smj = int(request.form["source_recommender_min_jobs"])
+        except (KeyError, ValueError) as exc:
+            error = f"Invalid input: {exc}"
+        else:
+            # Validate ranges and ordering
+            violations = []
+            if not (1 <= smt <= 10):
+                violations.append("Strong Match threshold must be 1–10")
+            if not (1 <= mt <= 10):
+                violations.append("Maybe threshold must be 1–10")
+            if mt > smt:
+                violations.append("Maybe threshold must be ≤ Strong Match threshold")
+            if not (1 <= ems <= 10):
+                violations.append("Also Found threshold must be 1–10")
+            if not (1 <= mje <= 200):
+                violations.append("Max jobs in email must be 1–200")
+            if not (1 <= smj <= 50):
+                violations.append("Source recommender min jobs must be 1–50")
+
+            if violations:
+                error = "; ".join(violations)
+            else:
+                # Update in-place — preserve all non-exposed keys
+                config.setdefault("filtering", {})
+                config.setdefault("email", {})
+                config.setdefault("source_recommender", {})
+                config["filtering"]["strong_match_threshold"] = smt
+                config["filtering"]["maybe_threshold"]        = mt
+                config["filtering"]["email_also_min_score"]   = ems
+                config["email"]["send_if_no_new_jobs"]        = sno
+                config["email"]["max_jobs_in_email"]          = mje
+                config["source_recommender"]["min_jobs"]      = smj
+
+                # Atomic write: tmp + os.replace
+                tmp = _SETTINGS_PATH.with_suffix(".yaml.tmp")
+                tmp.write_text(
+                    yaml.safe_dump(config, sort_keys=False, default_flow_style=False),
+                    encoding="utf-8",
+                )
+                os.replace(tmp, _SETTINGS_PATH)
+                log.info("[settings] settings.yaml updated via /settings")
+                return redirect(url_for("settings") + "?saved=1")
+
+    f = config.get("filtering", {})
+    e = config.get("email", {})
+    sr = config.get("source_recommender", {})
+    vals = {
+        "strong_match_threshold":   f.get("strong_match_threshold", 6),
+        "maybe_threshold":          f.get("maybe_threshold", 5),
+        "email_also_min_score":     f.get("email_also_min_score", 5),
+        "send_if_no_new_jobs":      e.get("send_if_no_new_jobs", True),
+        "max_jobs_in_email":        e.get("max_jobs_in_email", 50),
+        "source_recommender_min_jobs": sr.get("min_jobs", 5),
+    }
+
+    def _checked(val):
+        return 'checked' if val else ''
+
+    saved_banner = (
+        '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;'
+        'padding:10px 16px;color:#166534;margin-bottom:18px">'
+        '✓ Settings saved. Changes apply on the next scheduled scrape run.</div>'
+        if saved else ""
+    )
+    error_banner = (
+        f'<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;'
+        f'padding:10px 16px;color:#991b1b;margin-bottom:18px">⚠ {error}</div>'
+        if error else ""
+    )
+
+    body = f"""
+<h2 style="margin-bottom:6px">Settings</h2>
+<p style="color:#64748b;font-size:13px;margin-bottom:20px">
+  Changes apply on the next scheduled scrape run (07:00).
+</p>
+{saved_banner}{error_banner}
+<form method="POST" action="/settings">
+  <input type="hidden" name="send_if_no_new_jobs" value="0">
+
+  <fieldset style="border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <legend style="font-weight:600;padding:0 6px">Scoring Thresholds</legend>
+
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px">
+        Strong Match threshold
+        <span style="font-weight:400;color:#64748b"> — jobs at or above this score go in the email's Strong Matches section</span>
+      </label>
+      <input type="number" name="strong_match_threshold" value="{vals['strong_match_threshold']}"
+             min="1" max="10" required style="width:80px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">
+    </div>
+
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px">
+        Maybe threshold
+        <span style="font-weight:400;color:#64748b"> — jobs at or above this score are saved to the browser (Flask job list)</span>
+      </label>
+      <input type="number" name="maybe_threshold" value="{vals['maybe_threshold']}"
+             min="1" max="10" required style="width:80px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">
+    </div>
+
+    <div>
+      <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px">
+        Also Found threshold
+        <span style="font-weight:400;color:#64748b"> — jobs at or above this score appear in the email's Also Found section (independent of Maybe threshold)</span>
+      </label>
+      <input type="number" name="email_also_min_score" value="{vals['email_also_min_score']}"
+             min="1" max="10" required style="width:80px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">
+    </div>
+  </fieldset>
+
+  <fieldset style="border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <legend style="font-weight:600;padding:0 6px">Email Behaviour</legend>
+
+    <div style="margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" name="send_if_no_new_jobs" value="1" {_checked(vals['send_if_no_new_jobs'])}>
+        Send email even when no new jobs cleared the Strong Match threshold
+      </label>
+    </div>
+
+    <div>
+      <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px">
+        Maximum jobs per email
+      </label>
+      <input type="number" name="max_jobs_in_email" value="{vals['max_jobs_in_email']}"
+             min="1" max="200" required style="width:80px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">
+    </div>
+  </fieldset>
+
+  <fieldset style="border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:24px">
+    <legend style="font-weight:600;padding:0 6px">Source Recommendations</legend>
+    <div>
+      <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px">
+        High-rated jobs needed to suggest new sources
+        <span style="font-weight:400;color:#64748b"> — number of jobs scoring ≥ 8 before the weekly digest suggests new organisations</span>
+      </label>
+      <input type="number" name="source_recommender_min_jobs" value="{vals['source_recommender_min_jobs']}"
+             min="1" max="50" required style="width:80px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px">
+    </div>
+  </fieldset>
+
+  <button type="submit"
+          style="background:#2563eb;color:#fff;border:none;border-radius:6px;
+                 padding:10px 24px;font-size:14px;font-weight:500;cursor:pointer">
+    Save Settings
+  </button>
+</form>
+"""
+    return _page_html("Settings", body)
 
 
 @app.route("/health")
