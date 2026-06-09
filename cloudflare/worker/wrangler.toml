@@ -2,6 +2,20 @@ name = "job-feedback"
 main = "index.js"
 compatibility_date = "2024-01-01"
 
-[[kv_namespaces]]
-binding = "FEEDBACK_KV"
-id = "eb681e61163c429586bb91f7a3322c7e"
+# FLASK_API_URL is the Cloudflare Tunnel public hostname that proxies to Flask at
+# localhost:5001. It is intentionally public in this repo — the URL is a DNS CNAME
+# to the tunnel, not a secret. The write endpoints (/api/v1/*) are protected by
+# HMAC signatures. The read routes (/jobs, /feedback) are unprotected by design
+# (personal data, not credentials). Do not store CF_WORKER_SECRET here — use
+# wrangler secret put CF_WORKER_SECRET.
+[vars]
+FLASK_API_URL = "https://feedback-api.timovanommeren.com"
+
+# Build step: regenerate survey form HTML from config/criteria.yaml before every
+# wrangler deploy. Run from cloudflare/worker/ — path is relative to repo root.
+[build]
+command = "python ../../scripts/generate_worker_form.py"
+
+# KV namespace removed in Architecture C migration — no longer used.
+# Delete the FEEDBACK_KV namespace manually in the CF dashboard after confirming
+# no remaining entries (check https://dash.cloudflare.com → Workers → KV).

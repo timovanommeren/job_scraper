@@ -403,6 +403,24 @@ schtasks /run   /tn "JobScraperFeedbackServer"
 schtasks /end   /tn "JobScraperFeedbackServer"
 ```
 
+### Verify feedback pipeline before sending a digest
+
+Run before `python main.py` or `python main.py --weekly-digest`:
+
+```powershell
+sc query cloudflared                                    # STATE = RUNNING
+curl http://localhost:5001/health                       # 200 OK
+curl https://feedback-api.timovanommeren.com/health    # 200 OK (not HTTP 530)
+```
+
+In `cloudflare/worker/`:
+```bash
+wrangler deployments list   # timestamp must be >= most recent index.js commit
+```
+
+If tunnel is down: `net start cloudflared` (admin shell required)
+If Worker is stale: `wrangler deploy` (from `cloudflare/worker/`)
+
 ---
 
 ## Documentation Maintenance

@@ -1013,6 +1013,21 @@ if __name__ == "__main__":
             log.info("Port 5001 already in use — another server instance is running. Exiting.")
             sys.exit(0)
 
+    # ── Tunnel health check ────────────────────────────────────────────────────
+    _tunnel_url = os.environ.get("FLASK_API_URL", "")
+    if _tunnel_url:
+        import urllib.request as _urllib_req
+        try:
+            _r = _urllib_req.urlopen(_tunnel_url.rstrip("/") + "/health", timeout=3)
+            if _r.status != 200:
+                log.warning("Tunnel reachable but /health returned %d — email pill feedback may fail", _r.status)
+        except Exception:
+            log.warning(
+                "FLASK_API_URL tunnel unreachable at startup (%s) — "
+                "run 'cloudflared tunnel run job-scraper-feedback' or install as a service; "
+                "email pill feedback will fail until the tunnel is running.", _tunnel_url
+            )
+
     pid_path = Path(__file__).parent / ".server.pid"
     pid_path.write_text(str(os.getpid()))
     log.info("Feedback server starting at http://localhost:5001")

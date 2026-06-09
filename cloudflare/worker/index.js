@@ -119,7 +119,10 @@ function surveyThanksPage() {
   );
 }
 
-function surveyErrorPage() {
+function surveyErrorPage(flaskUrl = "", jobId = "") {
+  const link = (flaskUrl && jobId)
+    ? ` or <a href="${flaskUrl}/jobs/${jobId}" style="color:#3b82f6">open this job</a>`
+    : "";
   return new Response(
     `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
@@ -138,14 +141,17 @@ function surveyErrorPage() {
 <div class="card">
   <div class="emoji">⚠️</div>
   <h2>Something went wrong</h2>
-  <p>Try again or open <strong>localhost:5001</strong> to rate this job.</p>
+  <p>Try again${link} to rate it manually.</p>
 </div>
 </body></html>`,
     { status: 500, headers: { "Content-Type": "text/html;charset=UTF-8" } }
   );
 }
 
-function expiredPage() {
+function expiredPage(flaskUrl = "", jobId = "") {
+  const link = (flaskUrl && jobId)
+    ? `<a href="${flaskUrl}/jobs/${jobId}" style="color:#3b82f6">Open this job</a>`
+    : "Open the job browser";
   return new Response(
     `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
@@ -164,7 +170,7 @@ function expiredPage() {
 <div class="card">
   <div class="emoji">⏰</div>
   <h2>Link expired</h2>
-  <p>Open <strong>localhost:5001</strong> to rate this job.</p>
+  <p>${link} to rate it manually.</p>
 </div>
 </body></html>`,
     { status: 403, headers: { "Content-Type": "text/html;charset=UTF-8" } }
@@ -346,7 +352,7 @@ export default {
       if (action === "skip_suggestion" && suggestionId) {
         if (!sig) return errorPage(400, "Missing parameters.");
         if (!(await verifyActionSig(secret, suggestionId, "skip_suggestion", sig))) {
-          return expiredPage();
+          return expiredPage(flaskUrl, "");
         }
         if (!flaskUrl) return errorPage(500, "Flask API URL not configured.");
         try {
@@ -382,14 +388,14 @@ h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style
         resolvedAction = score >= 7 ? "like" : "pass";
         if (!jobId || !sig) return errorPage(400, "Missing parameters.");
         if (!(await verifyActionSig(secret, jobId, "rate", sig))) {
-          return expiredPage();
+          return expiredPage(flaskUrl, jobId);
         }
       } else {
         if (!jobId || !["like", "pass"].includes(resolvedAction) || !sig) {
           return errorPage(400, "Missing or invalid parameters.");
         }
         if (!(await verifyActionSig(secret, jobId, resolvedAction, sig))) {
-          return expiredPage();
+          return expiredPage(flaskUrl, jobId);
         }
       }
 
@@ -416,7 +422,7 @@ h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style
 
       if (!jobId || !sig) return errorPage(400, "Missing parameters.");
       if (!(await verifyActionSig(secret, jobId, originalAction, sig))) {
-        return expiredPage();
+        return expiredPage(flaskUrl, jobId);
       }
       return new Response(surveyPage(jobId, sig, title, org, originalAction),
         { status: 200, headers: { "Content-Type": "text/html;charset=UTF-8" } });
@@ -442,7 +448,7 @@ h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style
         return errorPage(400, "Invalid action.");
       }
       if (!(await verifyActionSig(secret, jobId, originalAction, sig))) {
-        return expiredPage();
+        return expiredPage(flaskUrl, jobId);
       }
 
       // Parse criteria values (1–5 each)
@@ -458,7 +464,7 @@ h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style
       const derivedScore = applied ? 10 : Math.max(1, Math.min(10, Math.round(avg * 2)));
       const action = applied ? "applied" : (derivedScore >= 7 ? "like" : "pass");
 
-      if (!flaskUrl) return surveyErrorPage();
+      if (!flaskUrl) return surveyErrorPage(flaskUrl, jobId);
       try {
         const resp = await postToFlask(flaskUrl, secret, "/api/v1/feedback", {
           job_id: jobId,
@@ -469,11 +475,11 @@ h2{margin:0 0 8px;font-size:20px}p{color:#64748b;font-size:14px;margin:0}</style
         });
         if (!resp.ok) {
           console.error(`[survey POST] Flask error: ${resp.status}`);
-          return surveyErrorPage();
+          return surveyErrorPage(flaskUrl, jobId);
         }
       } catch (e) {
         console.error(`[survey POST] Flask call failed: ${e}`);
-        return surveyErrorPage();
+        return surveyErrorPage(flaskUrl, jobId);
       }
       return surveyThanksPage();
     }

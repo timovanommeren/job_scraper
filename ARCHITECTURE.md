@@ -109,8 +109,7 @@ feedback/server.py  (Task Scheduler → at logon, always-on)
 cloudflare/worker/index.js  (deployed to Cloudflare Workers)
   └── feedback/server.py  [via FLASK_API_URL Cloudflare Tunnel → POST /api/v1/feedback, /api/v1/skip-suggestion]
 
-feedback/cf_sync.py  (Task Scheduler → every hour — legacy; no-op once KV namespace is deleted)
-  └── (previously polled Cloudflare KV; KV binding removed in Architecture C migration)
+feedback/cf_sync.py  (legacy no-op — KV namespace deleted in Architecture C migration; Task Scheduler task still registered but does nothing)
 
 scripts/generate_worker_form.py  (run by wrangler deploy via [build] hook)
   └── config/criteria.yaml  →  cloudflare/worker/index.js  (regenerates criteria slider HTML)
@@ -241,14 +240,22 @@ All flags are defined in `main.py`'s `argparse` block. Call `python main.py --he
 
 ## Windows Task Scheduler
 
-Four tasks are registered. All are under the current user account. If the machine is asleep when a task fires, the task runs at next wakeup (Windows default: "Run as soon as possible after a scheduled start is missed").
+Four Task Scheduler tasks and one Windows Service are registered. All run under the current user account. If the machine is asleep when a task fires, the task runs at next wakeup (Windows default: "Run as soon as possible after a scheduled start is missed").
 
 | Task Name | Command | Schedule | Notes |
 |---|---|---|---|
 | `JobScraperFeedbackServer` | `pythonw.exe feedback\server.py` | At every user logon | RestartCount=5, interval=2 min. No window. Logs to `logs\server.log`. |
 | `JobScraperDaily` | `run.bat` | Daily at 07:00 | `run.bat` checks port 5001 first, starts server if needed, then `python main.py`. Logs to `logs\task_scheduler_output.log`. |
 | `JobScraperWeeklyDigest` | `python.exe main.py --weekly-digest` | Every Tuesday at 08:00 | Runs independently of daily scrape. Queries last 7 days from DB. |
-| `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Every hour | Pulls phone feedback from Cloudflare KV into local DB + feedback_store.json. Only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`. |
+| `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Every hour | **Legacy no-op** — KV namespace removed in Architecture C migration. Task can be disabled; `cf_sync.py` exits cleanly with no KV binding. |
+
+**Windows Service (not Task Scheduler):**
+
+| Service Name | Binary | Notes |
+|---|---|---|
+| `cloudflared` | `C:\Users\timov\bin\cloudflared.exe` | Cloudflare Tunnel daemon. Routes `feedback-api.timovanommeren.com` → `http://localhost:5001`. Required for CF Worker → Flask feedback path. Install: `cloudflared service install` (admin shell). Config: `~\.cloudflared\config.yml`. |
+
+The cloudflared tunnel must be running for email pill feedback to work. `feedback/server.py` checks tunnel health at startup and warns in `logs/server.log` if unreachable.
 
 **`run.bat` logic:**
 ```batch
@@ -707,7 +714,7 @@ So feedback given today affects tomorrow's run's scores. The more feedback you g
 
 **Timeout:** The entire recommender call (Claude + URL validation) is wrapped in `ThreadPoolExecutor(max_workers=1) + future.result(timeout=90)` in `gmail.py`. If it exceeds 90 seconds, a WARNING is logged and the weekly digest is sent without the suggestions section.
 
-**Skipping suggestions:** Each suggestion card in the email contains a skip link — HMAC-signed, routed through the Cloudflare Worker (`action=skip_suggestion`). `cf_sync.py` handles the resulting KV entry and sets `status='skipped'` in `source_suggestions`. Skipped orgs are excluded from future Claude suggestion output. The desktop fallback is the Flask `/skip-suggestion?id=N` route.
+**Skipping suggestions:** Each suggestion card in the email contains a skip link — HMAC-signed, routed through the Cloudflare Worker (`action=skip_suggestion`). The Worker POSTs `{suggestion_id}` directly to Flask's `/api/v1/skip-suggestion` via the Cloudflare Tunnel. Flask sets `status='skipped'` in `source_suggestions`. Skipped orgs are excluded from future Claude suggestion output. The desktop fallback is the Flask `/skip-suggestion?id=N` route.
 
 **SOURCE_NAME_TO_DISPLAY dict:** Maps scraper `source_name` slugs to display names used in the Claude prompt so it knows which orgs are already covered. A WARNING (not assertion) is logged if the live registry has slugs not in the dict — add them to keep the coverage list accurate.
 
@@ -750,8 +757,7 @@ job_scraper/
 ├── feedback/
 │   ├── __init__.py
 │   ├── .server.pid               # PID file written by server.py at startup (runtime artifact)
-│   ├── cf_sync.py                # Legacy: Cloudflare KV poll → SQLite. KV removed (Architecture C);
-│   │                             #   will no-op gracefully once KV namespace deleted from CF dashboard.
+│   ├── cf_sync.py                # Legacy no-op. KV namespace deleted (Architecture C). Safe to ignore.
 │   ├── feedback_store.json       # Flat JSON log of like/pass actions (for prompt calibration)
 │   ├── profile_updater.py        # generate_prompt_additions() + build_feedback_footer_html()
 │   │                             #   + update_liked_organizations() (writes liked_organizations to profile.yaml)
