@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from werkzeug.datastructures import MultiDict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -154,21 +155,21 @@ class TestSettingsPost:
     def test_send_if_no_new_jobs_unchecked_stores_false(self, client):
         tc, settings_path = client
         # Unchecked: only the hidden field "0" is submitted (checkbox absent)
-        tc.post("/settings", data=[
+        tc.post("/settings", data=MultiDict([
             ("strong_match_threshold", "6"),
             ("maybe_threshold", "5"),
             ("email_also_min_score", "5"),
             ("send_if_no_new_jobs", "0"),  # hidden field only — checkbox not checked
             ("max_jobs_in_email", "50"),
             ("source_recommender_min_jobs", "5"),
-        ])
+        ]))
         written = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
         assert written["email"]["send_if_no_new_jobs"] is False
 
     def test_send_if_no_new_jobs_checked_stores_true(self, client):
         tc, settings_path = client
         # Checked: hidden field "0" + checkbox "1" both submitted
-        tc.post("/settings", data=[
+        tc.post("/settings", data=MultiDict([
             ("strong_match_threshold", "6"),
             ("maybe_threshold", "5"),
             ("email_also_min_score", "5"),
@@ -176,6 +177,6 @@ class TestSettingsPost:
             ("send_if_no_new_jobs", "1"),  # checkbox checked
             ("max_jobs_in_email", "50"),
             ("source_recommender_min_jobs", "5"),
-        ])
+        ]))
         written = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
         assert written["email"]["send_if_no_new_jobs"] is True
