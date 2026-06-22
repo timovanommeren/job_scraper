@@ -12,8 +12,12 @@ from unittest.mock import patch
 
 
 def _sign(secret: str, job_id: str, action: str) -> str:
-    """Mirror of the signing logic in _feedback_action_url."""
-    day_bucket = int(time.time()) // 86400
+    """Mirror of the signing logic in _feedback_action_url.
+
+    Uses a 7-day weekly bucket (604800s) so links stay valid for the full
+    week — matches the weekly TTL in notifier/gmail.py:_feedback_action_url.
+    """
+    day_bucket = int(time.time()) // 604800
     payload = f"{job_id}:{action}:{day_bucket}"
     return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
 
@@ -59,14 +63,14 @@ class TestFeedbackActionUrl:
         assert "/feedback" in url
         assert "action=pass" in url
 
-    def test_cf_rate_url_uses_rate_route(self):
-        """CF rate action uses /rate route (not /feedback)."""
+    def test_cf_rate_url_uses_feedback_route(self):
+        """CF rate action (no score) uses /feedback route (Architecture C — /rate removed)."""
         env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": "testsecret"}
         with patch.dict(os.environ, env, clear=False):
             import importlib; import notifier.gmail as gm; importlib.reload(gm)
             url = gm._feedback_action_url("7", "rate")
-        assert "/rate" in url
-        assert "/feedback" not in url
+        assert "/feedback" in url
+        assert "/rate" not in url
         assert "job_id=7" in url
 
     def test_hmac_signature_is_correct(self):
@@ -133,13 +137,14 @@ class TestFeedbackActionUrl:
         expected_sig = _sign(secret, "99", "rate")
         assert sig_in_url == expected_sig
 
-    def test_rate_button_without_score_still_uses_rate_route(self):
-        """action='rate' with no score (old Rate button) still goes to /rate form."""
+    def test_rate_button_without_score_uses_feedback_route(self):
+        """action='rate' with no score goes to /feedback (no score param), /rate removed."""
         env = {"CF_WORKER_URL": "https://worker.example.com", "CF_WORKER_SECRET": "s3cr3t"}
         with patch.dict(os.environ, env, clear=False):
             import importlib; import notifier.gmail as gm; importlib.reload(gm)
             url = gm._feedback_action_url("10", "rate")
-        assert "/rate" in url
+        assert "/feedback" in url
+        assert "/rate" not in url
         assert "score=" not in url
 
     def test_all_ten_pills_produce_correct_score_params(self):
