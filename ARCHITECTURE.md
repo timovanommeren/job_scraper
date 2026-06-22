@@ -72,7 +72,7 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── scrapers/impactpool.py
         ├── scrapers/uncareers.py          [DISABLED]
         ├── scrapers/eucareers.py
-        ├── scrapers/oecd.py               [DISABLED]
+        ├── scrapers/oecd.py               # SmartRecruiters Posting API
         ├── scrapers/academictransfer.py
         ├── scrapers/jrc.py
         ├── scrapers/rand.py
@@ -325,7 +325,7 @@ class RawJob:
 | `impactpool` | `ImpactpoolScraper` | requests + BeautifulSoup | ✅ Active |
 | `uncareers` | `UnCareersScraper` | — | ❌ Disabled ([#2](https://github.com/timovanommeren/job_scraper/issues/2)) |
 | `eucareers` | `EuCareersScraper` | Playwright, `a[href*="/trainee/"]` | ✅ Active (seasonal) |
-| `oecd` | `OecdScraper` | — | ❌ Disabled ([#3](https://github.com/timovanommeren/job_scraper/issues/3)) |
+| `oecd` | `OecdScraper` | SmartRecruiters Posting API (list + per-posting detail JSON) | ✅ Active |
 | `academictransfer` | `AcademicTransferScraper` | requests + BeautifulSoup, paginated | ✅ Active |
 | `jrc` | `JRCScraper` | requests + BeautifulSoup | ✅ Active |
 | `rand` | `RandScraper` | Workday CXS JSON API (POST) | ✅ Active |
@@ -790,7 +790,7 @@ job_scraper/
     ├── fgv.py                    # DISABLED — original domain defunct
     ├── impactpool.py             # Impactpool — server-rendered cards (requests + BS4)
     ├── jrc.py                    # JRC PhD positions — h3-based parsing (requests + BS4)
-    ├── oecd.py                   # DISABLED — Cloudflare bot challenge
+    ├── oecd.py                   # OECD — SmartRecruiters Posting API (list + detail JSON)
     ├── rand.py                   # RAND Corporation — Workday CXS JSON API (POST)
     ├── scp.py                    # SCP vacancies — werkenvoornederland.nl Bloomreach endpoint
     ├── dutch_universities.py     # 7 Dutch university scrapers (uu, tilburg, eur, radboud, uva, vu, rug)
@@ -880,7 +880,6 @@ CF_WORKER_SECRET=...                  # Optional; HMAC secret shared with CF Wor
 |---|---|---|
 | `tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | `uncareers.py` | CloudFront (AWS CDN) returns HTTP 403 to all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
-| `oecd.py` | Cloudflare bot challenge before any content loads | [#3](https://github.com/timovanommeren/job_scraper/issues/3) |
 | `bit.py` | Cloudflare block; also confirmed 0 open positions at audit | [#4](https://github.com/timovanommeren/job_scraper/issues/4) |
 | `fgv.py` | Playwright only — portal.fgv.br rejects requests TLS — see CLAUDE.md | — |
 
