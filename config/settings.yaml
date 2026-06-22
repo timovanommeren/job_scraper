@@ -6,24 +6,24 @@ scraper:
 
 filtering:
   # Tier boundaries (aligned with extractor_scorer.py):
-  #   strong_match: score >= strong_match_threshold  (8+)   → emailed immediately
-  #   maybe:        score >= maybe_threshold          (5–7)  → DB + Flask UI
-  #   not_relevant: score <  maybe_threshold          (≤4)   → DB only
+  #   strong_match: score >= strong_match_threshold  (6+)   → emailed immediately
+  #   maybe:        score >= maybe_threshold          (4–5)  → DB + Flask UI
+  #   not_relevant: score <  maybe_threshold          (≤3)   → DB only
   #
   # Email inclusion (read by notifier/gmail.py:_load_thresholds()):
   #   Daily "Strong Matches" section:  score >= strong_match_threshold
   #   Daily "Also Found" section:      score >= email_also_min_score (and < strong_match_threshold)
   #   Never emailed:                   score <  email_also_min_score
   strong_match_threshold: 6
-  maybe_threshold: 5
-  email_also_min_score: 5
+  maybe_threshold: 4
+  email_also_min_score: 1
 
 email:
-  send_if_no_new_jobs: true
+  send_if_no_new_jobs: false
   max_jobs_in_email: 50
 
 pre_filter:
-  mode: "B"   # 'B' = Claude pre-screen | 'C' = embedding similarity (see TODOS for migration criteria)
+  mode: B   # 'B' = Claude pre-screen | 'C' = embedding similarity (see TODOS for migration criteria)
 
 source_recommender:
   min_jobs: 5   # minimum high-rated jobs (score >= 8) needed to trigger suggestions

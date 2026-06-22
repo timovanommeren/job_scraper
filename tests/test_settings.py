@@ -153,14 +153,29 @@ class TestSettingsPost:
 
     def test_send_if_no_new_jobs_unchecked_stores_false(self, client):
         tc, settings_path = client
-        # Omitting the checkbox means it's unchecked (hidden field sends "0")
-        tc.post("/settings", data={
-            "strong_match_threshold": "6",
-            "maybe_threshold": "5",
-            "email_also_min_score": "5",
-            "send_if_no_new_jobs": "0",  # hidden field, checkbox omitted
-            "max_jobs_in_email": "50",
-            "source_recommender_min_jobs": "5",
-        })
+        # Unchecked: only the hidden field "0" is submitted (checkbox absent)
+        tc.post("/settings", data=[
+            ("strong_match_threshold", "6"),
+            ("maybe_threshold", "5"),
+            ("email_also_min_score", "5"),
+            ("send_if_no_new_jobs", "0"),  # hidden field only — checkbox not checked
+            ("max_jobs_in_email", "50"),
+            ("source_recommender_min_jobs", "5"),
+        ])
         written = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
         assert written["email"]["send_if_no_new_jobs"] is False
+
+    def test_send_if_no_new_jobs_checked_stores_true(self, client):
+        tc, settings_path = client
+        # Checked: hidden field "0" + checkbox "1" both submitted
+        tc.post("/settings", data=[
+            ("strong_match_threshold", "6"),
+            ("maybe_threshold", "5"),
+            ("email_also_min_score", "5"),
+            ("send_if_no_new_jobs", "0"),  # hidden field
+            ("send_if_no_new_jobs", "1"),  # checkbox checked
+            ("max_jobs_in_email", "50"),
+            ("source_recommender_min_jobs", "5"),
+        ])
+        written = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
+        assert written["email"]["send_if_no_new_jobs"] is True
