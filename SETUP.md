@@ -145,4 +145,4 @@ By default, the 1–10 rating row in every email digest links to `localhost:5001
    ```
 8. Register the hourly sync task (Task 4 above).
 
-Once configured, each rating pill in the email generates a signed 24-hour link that routes through the Worker and records your score. Phone ratings sync to the local DB within the hour.
+Once configured, each rating pill in the email generates an HMAC-signed link (valid for a 7-day weekly bucket) that routes through the Worker and records your score. The Worker POSTs the rating straight to the Flask API over a Cloudflare Tunnel, so it lands in the local DB immediately — there is no KV store or batch sync.
