@@ -65,7 +65,7 @@ graph LR
 | `JobScraperFeedbackServer` | `pythonw.exe feedback\server.py` | At every Windows logon (persistent) |
 | `JobScraperDaily` | `run.bat` → `python main.py` | Daily at 07:00 |
 | `JobScraperWeeklyDigest` | `python main.py --weekly-digest` | Every Tuesday at 08:00 |
-| `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Every hour (optional) |
+| `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Legacy — no-op since Architecture C (KV removed); safe to delete |
 
 The daily task only sends an email when at least one job scores ≥ 6/10. The weekly digest emails everything found in the last 7 days, regardless of score, and includes a **"Your Field This Week"** section at the bottom: Claude analyses your highest-rated jobs from the past 90 days, writes a 2–3 sentence field profile, and suggests up to 3 organisations worth adding as scrapers. Each suggestion includes a careers page link and a one-tap "Skip" button that prevents it from appearing again. The feedback sync task is only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`.
 
