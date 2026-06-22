@@ -8,7 +8,7 @@ filtering:
   # Tier boundaries (aligned with extractor_scorer.py):
   #   strong_match: score >= strong_match_threshold  (6+)   → emailed immediately
   #   maybe:        score >= maybe_threshold          (4–5)  → DB + Flask UI
-  #   not_relevant: score <  maybe_threshold          (≤3)   → DB only
+  #   not_relevant: score <  maybe_threshold          (≤3)   → DB only / never emailed
   #
   # Email inclusion (read by notifier/gmail.py:_load_thresholds()):
   #   Daily "Strong Matches" section:  score >= strong_match_threshold
@@ -16,7 +16,7 @@ filtering:
   #   Never emailed:                   score <  email_also_min_score
   strong_match_threshold: 6
   maybe_threshold: 4
-  email_also_min_score: 1
+  email_also_min_score: 4
 
 email:
   send_if_no_new_jobs: false
