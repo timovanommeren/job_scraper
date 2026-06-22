@@ -67,7 +67,7 @@ graph LR
 | `JobScraperWeeklyDigest` | `python main.py --weekly-digest` | Every Tuesday at 08:00 |
 | `JobScraperFeedbackSync` | `python.exe feedback\cf_sync.py` | Legacy — no-op since Architecture C (KV removed); safe to delete |
 
-The daily task only sends an email when at least one job scores ≥ 6/10. The weekly digest emails everything found in the last 7 days, regardless of score, and includes a **"Your Field This Week"** section at the bottom: Claude analyses your highest-rated jobs from the past 90 days, writes a 2–3 sentence field profile, and suggests up to 3 organisations worth adding as scrapers. Each suggestion includes a careers page link and a one-tap "Skip" button that prevents it from appearing again. The feedback sync task is only active when `CF_WORKER_URL` and `CF_WORKER_SECRET` are set in `.env`.
+The daily task only sends an email when at least one job scores ≥ 6/10. The weekly digest emails everything found in the last 7 days, regardless of score, and includes a **"Your Field This Week"** section at the bottom: Claude analyses your highest-rated jobs from the past 90 days, writes a 2–3 sentence field profile, and suggests up to 3 organisations worth adding as scrapers. Each suggestion includes a careers page link and a one-tap "Skip" button that prevents it from appearing again.
 
 ---
 
@@ -89,6 +89,8 @@ python main.py --reprocess 10       # Re-score last 10 failed extractions from D
 ## Feedback & Local UI
 
 The Flask app at **http://localhost:5001** lets you browse all scraped jobs, filter by relevance tier, and rate them. Each job's detail page has a 1–10 overall slider, five per-criterion sliders (Topic relevance, Methods match, Organization appeal, Career stage fit, Location), a freetext box, and an "✅ Applied" button once initial feedback is submitted. It starts automatically at login — no manual start needed.
+
+A **settings page at http://localhost:5001/settings** lets you edit pipeline parameters (score thresholds, max jobs per email, the field-intelligence trigger) without touching the YAML files directly.
 
 Every email digest includes a **1–10 rating row** per job (two rows of 5 number pills). Tapping a number records your score immediately — no form to open. When `CF_WORKER_URL` and `CF_WORKER_SECRET` are configured, the rating row uses HMAC-signed Cloudflare Worker links (7-day weekly bucket, so links stay valid all week) that work on any device including your phone. The Worker POSTs each rating straight to the Flask API over a Cloudflare Tunnel — there's no KV store or batch sync (`feedback/cf_sync.py` is a legacy no-op since the Architecture C migration).
 
