@@ -85,12 +85,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Source | File | Reason | Issue |
 |---|---|---|---|
 | UN Careers | `scrapers/uncareers.py` | CloudFront HTTP 403 — CDN blocks all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
-
-### Always-Broken Scrapers (runs but always returns 0)
-
-| Source | File | Reason | Issue |
-|---|---|---|---|
-| TNI | `scrapers/tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
+| TNI | `scrapers/tni.py` | HTTP 429 on every request — IP-level rate limit; disabled 2026-06-22, on manual weekly check list | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
 
 ### Seasonal Scrapers
 
@@ -123,7 +118,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 - **Email:** Gmail SMTP-SSL (port 465), `smtplib.SMTP_SSL`. Requires Gmail App Password, not account password. Each job card includes a 1–10 rating row; pills link to the CF Worker `/feedback` route with a score param.
 - **Scheduling:** Windows Task Scheduler — 4 registered tasks. **Not cron.** See [ARCHITECTURE.md](ARCHITECTURE.md#windows-task-scheduler).
 - **Retry logic:** `tenacity` — all scrapers and LLM calls use `@retry` decorators.
-- **HTTP retry:** `stop_after_attempt(3)`, `wait_exponential(min=2, max=15)` — standard for scrapers. TNI uses `stop_after_attempt(2)` to limit wasted time.
+- **HTTP retry:** `stop_after_attempt(3)`, `wait_exponential(min=2, max=15)` — standard for scrapers.
 - **Phone feedback:** Cloudflare Worker (JavaScript, `cloudflare/worker/index.js`) + Cloudflare Tunnel (`FLASK_API_URL` in `wrangler.toml [vars]`). No KV store — all feedback POSTs directly to Flask's `/api/v1/feedback` route via the tunnel. **HMAC signing** (`notifier/gmail.py:_feedback_action_url()`): sig = first 16 hex chars of `HMAC-SHA256(CF_WORKER_SECRET, "{job_id}:{action}:{week_bucket}")`, where `week_bucket = int(time.time()) // 604800` — a **7-day weekly** bucket, so links stay valid for the full week (extended from the original 24h daily bucket in commits `417671a`/`10d93c5`). The Worker recomputes the sig over the same payload to verify. Rating row pills: action="rate" HMAC-signed → Worker POSTs `{job_id, action, score}` to Flask. Full survey: action="survey" HMAC-signed → Worker serves 5-slider criteria form then POSTs `{job_id, criteria: {...}, comment, derived_score}` to Flask. Old "/rate" links redirect gracefully (Worker serves same survey form, verifies with action="rate"). Skip-suggestion links: action="skip_suggestion" → Worker POSTs `{suggestion_id}` to Flask `/api/v1/skip-suggestion`. Both Flask API routes are secured by `Authorization: Bearer <CF_WORKER_SECRET>`. `feedback/cf_sync.py` is a legacy no-op — KV namespace was removed (Architecture C migration). Deploy Worker changes with `wrangler deploy` from `cloudflare/worker/` (build hook runs `scripts/generate_worker_form.py` automatically; requires `wrangler login` if session expired). **To change criteria sliders: edit `config/criteria.yaml` then run `python scripts/generate_worker_form.py && wrangler deploy`.**
 
 ### Required environment variables (`.env` in project root)
@@ -311,7 +306,7 @@ Full profile with exact scoring rules, penalties, and bonus categories: **`confi
 
 | # | Title | Summary | Labels |
 |---|---|---|---|
-| [#1](https://github.com/timovanommeren/job_scraper/issues/1) | TNI: 429 on every run — IP-level block | Drupal CMS blocks scraper IP before headers are evaluated. Retry/header changes ineffective. | `bug` `scraper` `needs-investigation` |
+| [#1](https://github.com/timovanommeren/job_scraper/issues/1) | TNI: 429 on every run — IP-level block | **Closed wontfix 2026-06-22** — IP-level block hits even RSS; not worth a residential proxy for a rarely-relevant source. Scraper disabled, TNI on manual weekly check. | `bug` `scraper` `wontfix` |
 | [#2](https://github.com/timovanommeren/job_scraper/issues/2) | UN Careers disabled — CloudFront blocks all automation | AWS CDN returns 403 before any page content loads. Playwright and requests both blocked. | `bug` `scraper` `needs-investigation` |
 | [#3](https://github.com/timovanommeren/job_scraper/issues/3) | OECD disabled — Cloudflare bot challenge | **Resolved 2026-06-22** — re-enabled via SmartRecruiters Posting API (`api.smartrecruiters.com/v1/companies/OECD/postings`), which bypasses the Cloudflare-gated HTML frontend. | `bug` `scraper` |
 | [#4](https://github.com/timovanommeren/job_scraper/issues/4) | BIT disabled — Cloudflare + 0 positions | **Resolved 2026-06-22** — re-enabled via the WordPress careers page (`bi.team/about-us/careers/`, reachable with plain requests; Cloudflare block was stale). No Greenhouse ATS (slugs 404); parses `article.c-list-item` HTML. | `scraper` `low-priority` |

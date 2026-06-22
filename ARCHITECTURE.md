@@ -76,7 +76,7 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── scrapers/academictransfer.py
         ├── scrapers/jrc.py
         ├── scrapers/rand.py
-        ├── scrapers/tni.py                [always 429]
+        ├── scrapers/tni.py                [DISABLED]
         ├── scrapers/case_poland.py
         ├── scrapers/busara.py
         ├── scrapers/wodc.py
@@ -329,7 +329,7 @@ class RawJob:
 | `academictransfer` | `AcademicTransferScraper` | requests + BeautifulSoup, paginated | ✅ Active |
 | `jrc` | `JRCScraper` | requests + BeautifulSoup | ✅ Active |
 | `rand` | `RandScraper` | Workday CXS JSON API (POST) | ✅ Active |
-| `tni` | `TNIScraper` | requests + BeautifulSoup | ⚠️ Always 429 ([#1](https://github.com/timovanommeren/job_scraper/issues/1)) |
+| `tni` | `TNIScraper` | — | ❌ Disabled ([#1](https://github.com/timovanommeren/job_scraper/issues/1)) |
 | `case_poland` | `CasePolandScraper` | requests + BeautifulSoup | ✅ Active |
 | `busara` | `BusaraScraper` | Lever ATS JSON API (GET) | ✅ Active |
 | `wodc` | `WODCScraper` | Bloomreach CMS endpoint, requests | ✅ Active |
@@ -348,7 +348,7 @@ class RawJob:
 
 
 ### Retry policy
-Most scrapers use `tenacity.retry` with `stop_after_attempt(3)` and `wait_exponential(min=2, max=15)`. Exceptions: TNI uses `stop_after_attempt(2)` to limit wasted time when blocked.
+Most scrapers use `tenacity.retry` with `stop_after_attempt(3)` and `wait_exponential(min=2, max=15)`.
 
 ### WODC and SCP — Bloomreach CMS endpoint
 Both scrapers use the same undocumented component-rendering endpoint on `werkenvoornederland.nl`:
@@ -797,7 +797,7 @@ job_scraper/
     │                             #   PROVISIONAL selectors — run portal audit before trusting results.
     │                             #   GenericStaticUniversityScraper (requests+BS4) + GenericPlaywrightUniversityScraper
     │                             #   All driven by UNIVERSITY_SCRAPER_CONFIGS list; create_university_scrapers() builds registry entries
-    ├── tni.py                    # TNI — requests; always returns 429 (IP-level block)
+    ├── tni.py                    # DISABLED — HTTP 429 IP-level block; manual weekly check
     ├── trimbos.py                # Trimbos-instituut — Playwright; JS-rendered SPA
     ├── uncareers.py              # DISABLED — CloudFront 403 block
     └── wodc.py                   # WODC vacancies — werkenvoornederland.nl Bloomreach endpoint
@@ -878,7 +878,7 @@ CF_WORKER_SECRET=...                  # Optional; HMAC secret shared with CF Wor
 
 | Scraper | Reason | GitHub Issue |
 |---|---|---|
-| `tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
+| `tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based; disabled, manual weekly check | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | `uncareers.py` | CloudFront (AWS CDN) returns HTTP 403 to all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | `fgv.py` | Playwright only — portal.fgv.br rejects requests TLS — see CLAUDE.md | — |
 
