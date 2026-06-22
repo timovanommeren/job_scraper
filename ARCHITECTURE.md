@@ -82,7 +82,7 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── scrapers/wodc.py
         ├── scrapers/scp.py
         ├── scrapers/trimbos.py
-        ├── scrapers/bit.py                [DISABLED]
+        ├── scrapers/bit.py                # WordPress careers page (requests + BS4)
         ├── scrapers/fgv.py
         ├── scrapers/epso_bluebook.py
         ├── scrapers/dutch_universities.py  (7 scrapers: uu, tilburg, eur, radboud, uva, vu, rug)
@@ -335,7 +335,7 @@ class RawJob:
 | `wodc` | `WODCScraper` | Bloomreach CMS endpoint, requests | ✅ Active |
 | `scp` | `SCPScraper` | Bloomreach CMS endpoint, requests | ✅ Active |
 | `trimbos` | `TrimbosScraper` | Playwright, `a[href*="vacaturebeschrijving"]` | ✅ Active |
-| `bit` | `BITScraper` | — | ❌ Disabled ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) |
+| `bit` | `BITScraper` | requests + BeautifulSoup, `article.c-list-item` + per-vacancy detail | ✅ Active |
 | `fgv` | `FGVScraper` | Playwright (`a[href^="/vaga/"]`) — portal.fgv.br rejects Python TLS | ✅ Active |
 | `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup — EU Commission Blue Book traineeship | ✅ Active (seasonal; applications open ~Mar and Oct) |
 | `uu` | `GenericStaticUniversityScraper` | requests + BS4; `li.overview-list__item` | ✅ Active (verified 2026-05-31; 24 jobs) |
@@ -782,7 +782,7 @@ job_scraper/
     ├── base.py                   # RawJob dataclass; BaseScraper + PlaywrightBaseScraper ABCs
     │
     ├── academictransfer.py       # PhD + postdoc from academictransfer.com (paginated, requests)
-    ├── bit.py                    # DISABLED — Cloudflare block; 0 open positions at audit
+    ├── bit.py                    # BIT — WordPress careers page, c-list-item cards (requests + BS4)
     ├── busara.py                 # Busara Center — Lever ATS JSON API
     ├── case_poland.py            # CASE Poland — HTML scraping (requests + BS4)
     ├── eucareers.py              # EU agency traineeships — Playwright; seasonal (Mar/Oct)
@@ -880,7 +880,6 @@ CF_WORKER_SECRET=...                  # Optional; HMAC secret shared with CF Wor
 |---|---|---|
 | `tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | `uncareers.py` | CloudFront (AWS CDN) returns HTTP 403 to all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
-| `bit.py` | Cloudflare block; also confirmed 0 open positions at audit | [#4](https://github.com/timovanommeren/job_scraper/issues/4) |
 | `fgv.py` | Playwright only — portal.fgv.br rejects requests TLS — see CLAUDE.md | — |
 
 ### Seasonal scrapers

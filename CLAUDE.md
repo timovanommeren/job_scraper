@@ -66,6 +66,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Impactpool | `scrapers/impactpool.py` | requests + BS4 |
 | Busara Center | `scrapers/busara.py` | Lever ATS JSON API (GET) |
 | OECD | `scrapers/oecd.py` | SmartRecruiters Posting API (GET list + per-posting detail JSON) |
+| BIT | `scrapers/bit.py` | requests + BS4, `article.c-list-item` cards + per-vacancy detail page |
 | WODC | `scrapers/wodc.py` | Bloomreach CMS endpoint, requests |
 | SCP | `scrapers/scp.py` | Bloomreach CMS endpoint, requests |
 | Trimbos-instituut | `scrapers/trimbos.py` | Playwright |
@@ -84,7 +85,6 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Source | File | Reason | Issue |
 |---|---|---|---|
 | UN Careers | `scrapers/uncareers.py` | CloudFront HTTP 403 — CDN blocks all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
-| BIT | `scrapers/bit.py` | Cloudflare block + confirmed 0 open positions | [#4](https://github.com/timovanommeren/job_scraper/issues/4) |
 
 ### Always-Broken Scrapers (runs but always returns 0)
 
@@ -290,7 +290,7 @@ The pipeline runs a cheap Claude Haiku pre-screen (Option B) before full LLM ext
 3. **Never add `anthropic.Anthropic()` instantiations outside `agents/extractor_scorer.py`.**
 4. **Never hardcode API keys, email credentials, model names, or score thresholds in source files.** Runtime values come from `.env`; model default is in `extractor_scorer.py` (not settings.yaml).
 5. **Never use `DROP TABLE` or recreate existing SQLite tables.** Use `ALTER TABLE` with `_safe_add_column()` for schema changes.
-6. **Never re-enable a disabled scraper (uncareers, bit) without reading its GitHub issue.** These are blocked by external infrastructure, not fixable with code changes alone. (OECD was re-enabled 2026-06-22 via its SmartRecruiters Posting API, which bypasses the Cloudflare-gated HTML frontend.)
+6. **Never re-enable a disabled scraper (uncareers) without reading its GitHub issue.** These are blocked by external infrastructure, not fixable with code changes alone. (OECD and BIT were both re-enabled 2026-06-22: OECD via its SmartRecruiters Posting API, BIT via its WordPress careers page — in both cases the Cloudflare block only ever applied to the old HTML entry point, and a probe found a reachable path behind it. The lesson: re-probe "Cloudflare-blocked" sources periodically; the block may be stale or path-specific.)
 7. **Never change `fetch()`'s return type** (must always return `list[RawJob]`, never `None`, never raises). Changing this breaks `main.py:run_scrapers()`.
 8. **Never push commits to GitHub without being explicitly asked.** Always save locally and present changes for review first.
 9. **Never hardcode score thresholds in source files.** The live gates come from `settings.yaml` (`strong_match_threshold`, `email_also_min_score`), loaded at startup by `notifier/gmail.py:_load_thresholds()`.
@@ -314,7 +314,7 @@ Full profile with exact scoring rules, penalties, and bonus categories: **`confi
 | [#1](https://github.com/timovanommeren/job_scraper/issues/1) | TNI: 429 on every run — IP-level block | Drupal CMS blocks scraper IP before headers are evaluated. Retry/header changes ineffective. | `bug` `scraper` `needs-investigation` |
 | [#2](https://github.com/timovanommeren/job_scraper/issues/2) | UN Careers disabled — CloudFront blocks all automation | AWS CDN returns 403 before any page content loads. Playwright and requests both blocked. | `bug` `scraper` `needs-investigation` |
 | [#3](https://github.com/timovanommeren/job_scraper/issues/3) | OECD disabled — Cloudflare bot challenge | **Resolved 2026-06-22** — re-enabled via SmartRecruiters Posting API (`api.smartrecruiters.com/v1/companies/OECD/postings`), which bypasses the Cloudflare-gated HTML frontend. | `bug` `scraper` |
-| [#4](https://github.com/timovanommeren/job_scraper/issues/4) | BIT disabled — Cloudflare + 0 positions | Cloudflare on main site; likely has Greenhouse ATS endpoint. | `scraper` `low-priority` |
+| [#4](https://github.com/timovanommeren/job_scraper/issues/4) | BIT disabled — Cloudflare + 0 positions | **Resolved 2026-06-22** — re-enabled via the WordPress careers page (`bi.team/about-us/careers/`, reachable with plain requests; Cloudflare block was stale). No Greenhouse ATS (slugs 404); parses `article.c-list-item` HTML. | `scraper` `low-priority` |
 | [#6](https://github.com/timovanommeren/job_scraper/issues/6) | EU Careers: Blue Book traineeship not covered | **Resolved 2026-05-29** — `scrapers/epso_bluebook.py` added; scrapes `traineeships.ec.europa.eu`. | `enhancement` `scraper` |
 
 **Before attempting to fix any scraper in this table: read the full issue on GitHub.** These were disabled for infrastructure reasons that code changes alone cannot resolve. The suggested next steps in each issue are where to start.
