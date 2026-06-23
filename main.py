@@ -92,6 +92,9 @@ def build_scraper_registry(settings: dict) -> dict:
     from scrapers.bit import BITScraper
     from scrapers.fgv import FGVScraper
     from scrapers.epso_bluebook import EPSOBluebookScraper
+    from scrapers.euraxess_msca import EuraxessMscaScraper
+    from scrapers.jobs_ac_uk import JobsAcUkScraper
+    from scrapers.euda import EudaScraper
 
     from scrapers.dutch_universities import create_university_scrapers
 
@@ -113,6 +116,9 @@ def build_scraper_registry(settings: dict) -> dict:
         BITScraper,
         FGVScraper,
         EPSOBluebookScraper,
+        EuraxessMscaScraper,
+        JobsAcUkScraper,
+        EudaScraper,
     ]
     registry = {cls.source_name: cls(settings) for cls in classes}
     registry.update(create_university_scrapers(settings))

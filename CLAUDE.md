@@ -9,7 +9,7 @@
 
 ## Project Identity
 
-A personal, automated job-hunting pipeline for **Timo van Ommeren** (timovanommeren@gmail.com). It scrapes 24 job sources daily, scores each posting against Timo's profile using the **Anthropic API (Claude Haiku)**, and sends a Gmail digest when strong matches (score ≥ `strong_match_threshold`/10, currently 6, set in `config/settings.yaml`) are found. A local Flask app at `localhost:5001` lets Timo browse all results and give feedback that actively recalibrates future scoring. Target roles: PhD positions in social/behavioural sciences, paid EU/UN traineeships, research analyst roles at policy think tanks.
+A personal, automated job-hunting pipeline for **Timo van Ommeren** (timovanommeren@gmail.com). It scrapes 27 job sources daily (24 active + 3 disabled stubs behind CDN blocks), scores each posting against Timo's profile using the **Anthropic API (Claude Haiku)**, and sends a Gmail digest when strong matches (score ≥ `strong_match_threshold`/10, currently 6, set in `config/settings.yaml`) are found. A local Flask app at `localhost:5001` lets Timo browse all results and give feedback that actively recalibrates future scoring. Target roles: PhD positions in social/behavioural sciences, paid EU/UN traineeships, research analyst roles at policy think tanks.
 
 Full system design: [ARCHITECTURE.md](ARCHITECTURE.md). Public overview: [README.md](README.md).
 
@@ -72,6 +72,8 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 | Trimbos-instituut | `scrapers/trimbos.py` | Playwright |
 | FGV | `scrapers/fgv.py` | Playwright (portal.fgv.br rejects Python TLS) |
 | EPSO Blue Book | `scrapers/epso_bluebook.py` | requests + BS4 |
+| EURAXESS MSCA | `scrapers/euraxess_msca.py` | requests + BS4, paginated; MSCA+R1 facet filter (`job_is_eu_founded[]=4348`, `job_research_profile[]=447`); separate from `euraxess.py`; prepends `[SOURCE NOTE] MSCA Doctoral Network` sentinel to raw_text |
+| jobs.ac.uk | `scrapers/jobs_ac_uk.py` | requests + BS4, multi-keyword HTML search → per-job detail fetch parsing JSON-LD `JobPosting` |
 | Utrecht University | `scrapers/dutch_universities.py` | requests + BS4, `li.overview-list__item` |
 | Tilburg University | `scrapers/dutch_universities.py` | Playwright, SAP SuccessFactors; pre_click "Search Jobs"; `a[href*=career_job_req_id]` |
 | Erasmus University Rotterdam | `scrapers/dutch_universities.py` | requests + BS4, `div.teaser` + pagination |
@@ -86,6 +88,7 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 |---|---|---|---|
 | UN Careers | `scrapers/uncareers.py` | CloudFront HTTP 403 — CDN blocks all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | TNI | `scrapers/tni.py` | HTTP 429 on every request — IP-level rate limit; disabled 2026-06-22, on manual weekly check list | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
+| EUDA | `scrapers/euda.py` | Cloudflare "Just a moment" JS challenge, domain-wide HTTP 403; headless Playwright also fails. Disabled 2026-06-23. Re-probe periodically (high-relevance source). | [#23](https://github.com/timovanommeren/job_scraper/issues/23) |
 
 ### Seasonal Scrapers
 
@@ -140,7 +143,7 @@ CF_WORKER_SECRET         # Optional. Shared HMAC secret (set via wrangler secret
 
 **Three processes, never conflate them.** The Flask app (`feedback/server.py`) runs continuously as a persistent Windows logon process — it is always alive, idle except when handling HTTP requests, and never touches the scraper pipeline. The daily scraper (`main.py` via `Job Scraper Daily` Task Scheduler at 07:00) and weekly digest (`main.py --weekly-digest` via `JobScraperWeeklyDigest` at Tuesday 08:00) are short-lived — they start, do their work, and exit. All three share one SQLite database (`db/jobs.db`), which uses WAL mode to allow concurrent reads from Flask while `main.py` writes.
 
-**Data flow in one paragraph.** Each of 24 scrapers returns a list of `RawJob` objects (title, url, source, raw_text, org, location, deadline). For each `RawJob`, `db/dedup.py:is_seen()` computes a SHA-256 hash of the canonical URL and checks the `url_hash` index — already seen jobs are skipped (dedup is O(1), happens before any API call). New jobs go to `agents/extractor_scorer.py:extract_and_score()` which calls the Anthropic API with a system prompt loaded from `config/profile.yaml`, augmented with recent feedback examples from `feedback/feedback_store.json` (this is the feedback loop — past feedback with per-criterion scores are injected as few-shot examples via `_item_note()`, and liked organisations from `config/profile.yaml:liked_organizations` receive a score boost). The structured output (`JobPosting` Pydantic model) is inserted into `db/jobs.db`. After all jobs are scored, `notifier/gmail.py:should_send_daily()` checks if any score ≥ `strong_match_threshold` (currently 6) or if `send_if_no_new_jobs` is true — if the condition is met, an HTML digest is emailed. Both thresholds are set in `config/settings.yaml`. Each job card in the email contains a 1–10 rating row (two rows of 5 HMAC-signed pills); tapping a pill records the score directly via the Cloudflare Worker without opening a form.
+**Data flow in one paragraph.** Each of 27 scrapers returns a list of `RawJob` objects (title, url, source, raw_text, org, location, deadline). For each `RawJob`, `db/dedup.py:is_seen()` computes a SHA-256 hash of the canonical URL and checks the `url_hash` index — already seen jobs are skipped (dedup is O(1), happens before any API call). New jobs go to `agents/extractor_scorer.py:extract_and_score()` which calls the Anthropic API with a system prompt loaded from `config/profile.yaml`, augmented with recent feedback examples from `feedback/feedback_store.json` (this is the feedback loop — past feedback with per-criterion scores are injected as few-shot examples via `_item_note()`, and liked organisations from `config/profile.yaml:liked_organizations` receive a score boost). The structured output (`JobPosting` Pydantic model) is inserted into `db/jobs.db`. After all jobs are scored, `notifier/gmail.py:should_send_daily()` checks if any score ≥ `strong_match_threshold` (currently 6) or if `send_if_no_new_jobs` is true — if the condition is met, an HTML digest is emailed. Both thresholds are set in `config/settings.yaml`. Each job card in the email contains a 1–10 rating row (two rows of 5 HMAC-signed pills); tapping a pill records the score directly via the Cloudflare Worker without opening a form.
 
 **Where to find things for common changes:**
 - Change how jobs are scored or what fields are extracted → `agents/extractor_scorer.py` + `config/profile.yaml`
@@ -311,6 +314,7 @@ Full profile with exact scoring rules, penalties, and bonus categories: **`confi
 | [#3](https://github.com/timovanommeren/job_scraper/issues/3) | OECD disabled — Cloudflare bot challenge | **Resolved 2026-06-22** — re-enabled via SmartRecruiters Posting API (`api.smartrecruiters.com/v1/companies/OECD/postings`), which bypasses the Cloudflare-gated HTML frontend. | `bug` `scraper` |
 | [#4](https://github.com/timovanommeren/job_scraper/issues/4) | BIT disabled — Cloudflare + 0 positions | **Resolved 2026-06-22** — re-enabled via the WordPress careers page (`bi.team/about-us/careers/`, reachable with plain requests; Cloudflare block was stale). No Greenhouse ATS (slugs 404); parses `article.c-list-item` HTML. | `scraper` `low-priority` |
 | [#6](https://github.com/timovanommeren/job_scraper/issues/6) | EU Careers: Blue Book traineeship not covered | **Resolved 2026-05-29** — `scrapers/epso_bluebook.py` added; scrapes `traineeships.ec.europa.eu`. | `enhancement` `scraper` |
+| [#23](https://github.com/timovanommeren/job_scraper/issues/23) | EUDA disabled — Cloudflare blocks all automation | Domain-wide Cloudflare JS challenge (HTTP 403 on every path incl. sitemap); headless Playwright also fails. Disabled stub added 2026-06-23. High-relevance source — re-probe periodically. | `bug` `scraper` `needs-investigation` `p2` `role:engineer` |
 
 **Before attempting to fix any scraper in this table: read the full issue on GitHub.** These were disabled for infrastructure reasons that code changes alone cannot resolve. The suggested next steps in each issue are where to start.
 

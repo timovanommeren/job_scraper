@@ -15,6 +15,12 @@ Covers UNDP, UNODC, UNESCO, and other UN agencies. Block occurs at CDN layer bef
 
 ---
 
+### EUDA: Cloudflare blocks all automation · [#23](https://github.com/timovanommeren/job_scraper/issues/23)
+
+EUDA (European Union Drugs Agency) is the highest-relevance employer for Timo's profile but is fully Cloudflare-gated. Probed 2026-06-23: every path on `euda.europa.eu` (jobs, calls, sitemap, root) returns HTTP 403 with a "Just a moment" JS challenge; `e-recruitment.euda.europa.eu` same; headless Playwright also fails to clear the challenge. `scrapers/euda.py` is a disabled stub returning `[]`. **Next steps (re-probe periodically — OECD/BIT precedent shows blocks can be stale):** try a headful or residential-IP browser; check whether EU Careers / EURAXESS already cross-post EUDA traineeships & SNE calls; watch for a public JSON/API endpoint behind the Cloudflare-gated HTML (as OECD's SmartRecruiters API turned out to be).
+
+---
+
 > **Resolved 2026-06-22:** OECD ([#3](https://github.com/timovanommeren/job_scraper/issues/3)) re-enabled via SmartRecruiters Posting API; BIT ([#4](https://github.com/timovanommeren/job_scraper/issues/4)) re-enabled via WordPress careers page; TNI ([#1](https://github.com/timovanommeren/job_scraper/issues/1)) disabled wontfix (IP-level 429 hits even RSS) and moved to the manual weekly check list. In both re-enabled cases the "Cloudflare block" only applied to a stale HTML entry point — re-probe such sources periodically.
 
 ---

@@ -85,6 +85,9 @@ run.bat  (Task Scheduler → daily at 07:00)
         ├── scrapers/bit.py                # WordPress careers page (requests + BS4)
         ├── scrapers/fgv.py
         ├── scrapers/epso_bluebook.py
+        ├── scrapers/euraxess_msca.py       # MSCA Doctoral Networks (filtered EURAXESS facets)
+        ├── scrapers/jobs_ac_uk.py          # UK academic jobs, keyword search + JSON-LD
+        ├── scrapers/euda.py               [DISABLED]
         ├── scrapers/dutch_universities.py  (7 scrapers: uu, tilburg, eur, radboud, uva, vu, rug)
         │     └── (all scrapers import scrapers/base.py: RawJob, BaseScraper)
         │
@@ -131,7 +134,7 @@ scripts/generate_worker_form.py  (run by wrangler deploy via [build] hook)
          │
          ▼
   ┌─ run_scrapers() ───────────────────────────────────────────┐
-  │  for each scraper in registry (24 scrapers):               │
+  │  for each scraper in registry (27 scrapers):               │
   │    scraper.fetch() → list[RawJob]                          │
   │    RawJob fields: title, url, source, raw_text,            │
   │                   organization, location, deadline,        │
@@ -338,6 +341,9 @@ class RawJob:
 | `bit` | `BITScraper` | requests + BeautifulSoup, `article.c-list-item` + per-vacancy detail | ✅ Active |
 | `fgv` | `FGVScraper` | Playwright (`a[href^="/vaga/"]`) — portal.fgv.br rejects Python TLS | ✅ Active |
 | `epso_bluebook` | `EPSOBluebookScraper` | requests + BeautifulSoup — EU Commission Blue Book traineeship | ✅ Active (seasonal; applications open ~Mar and Oct) |
+| `euraxess_msca` | `EuraxessMscaScraper` | requests + BS4, paginated; MSCA+R1 facet filter (`job_is_eu_founded[]=4348`, `job_research_profile[]=447`); prepends `[SOURCE NOTE] MSCA Doctoral Network` sentinel to raw_text | ✅ Active (added 2026-06-23) |
+| `jobs_ac_uk` | `JobsAcUkScraper` | requests + BS4; multi-keyword HTML search → per-job detail fetch parsing JSON-LD `JobPosting` (title/org/location/validThrough/description) | ✅ Active (added 2026-06-23) |
+| `euda` | `EudaScraper` | — | ❌ Disabled ([#23](https://github.com/timovanommeren/job_scraper/issues/23)) |
 | `uu` | `GenericStaticUniversityScraper` | requests + BS4; `li.overview-list__item` | ✅ Active (verified 2026-05-31; 24 jobs) |
 | `tilburg` | `GenericPlaywrightUniversityScraper` | Playwright; SAP SuccessFactors; pre_click "Search Jobs"; `a[href*=career_job_req_id]` | ✅ Active (verified 2026-05-31; 10–18 jobs) |
 | `eur` | `GenericStaticUniversityScraper` | requests + BS4; `div.teaser` + `li.pager__item--next a` pagination | ✅ Active (verified 2026-05-31; 24 jobs across 3 pages) |
@@ -785,10 +791,13 @@ job_scraper/
     ├── bit.py                    # BIT — WordPress careers page, c-list-item cards (requests + BS4)
     ├── busara.py                 # Busara Center — Lever ATS JSON API
     ├── case_poland.py            # CASE Poland — HTML scraping (requests + BS4)
+    ├── euda.py                   # DISABLED — Cloudflare JS challenge, domain-wide 403
     ├── eucareers.py              # EU agency traineeships — Playwright; seasonal (Mar/Oct)
     ├── euraxess.py               # EURAXESS research jobs — ECL article cards (requests)
+    ├── euraxess_msca.py          # EURAXESS MSCA Doctoral Networks — MSCA+R1 facet filter (requests)
     ├── fgv.py                    # DISABLED — original domain defunct
     ├── impactpool.py             # Impactpool — server-rendered cards (requests + BS4)
+    ├── jobs_ac_uk.py             # jobs.ac.uk — keyword HTML search + JSON-LD detail parse (requests)
     ├── jrc.py                    # JRC PhD positions — h3-based parsing (requests + BS4)
     ├── oecd.py                   # OECD — SmartRecruiters Posting API (list + detail JSON)
     ├── rand.py                   # RAND Corporation — Workday CXS JSON API (POST)
@@ -880,6 +889,7 @@ CF_WORKER_SECRET=...                  # Optional; HMAC secret shared with CF Wor
 |---|---|---|
 | `tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based; disabled, manual weekly check | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | `uncareers.py` | CloudFront (AWS CDN) returns HTTP 403 to all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
+| `euda.py` | Cloudflare "Just a moment" JS challenge — domain-wide HTTP 403 (incl. sitemap); headless Playwright also fails. High-relevance source; re-probe periodically. | [#23](https://github.com/timovanommeren/job_scraper/issues/23) |
 | `fgv.py` | Playwright only — portal.fgv.br rejects requests TLS — see CLAUDE.md | — |
 
 ### Seasonal scrapers
