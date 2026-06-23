@@ -1,6 +1,6 @@
 # Job Scraper
 
-A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 24 sources daily, runs a cheap Claude pre-screen to filter out irrelevant postings, scores each remaining job against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 6/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, and Dutch research institutes.
+A personal, automated job-hunting pipeline built for Timo van Ommeren. It scrapes 27 sources daily (24 active + 3 disabled behind CDN blocks), runs a cheap Claude pre-screen to filter out irrelevant postings, scores each remaining job against Timo's profile using Claude (Haiku), and sends an email digest whenever a strong match (score ≥ 6/10) is found. Target roles: researcher, data analyst, policy analyst, PhD student, traineeship — at EU institutions, UN agencies, think tanks, Dutch research institutes, and UK universities.
 
 Runs automatically via Windows Task Scheduler. No manual intervention needed once set up.
 
@@ -12,7 +12,7 @@ Runs automatically via Windows Task Scheduler. No manual intervention needed onc
 graph LR
     A[Task Scheduler<br/>07:00 daily] --> B[run.bat]
     B --> C[main.py]
-    C --> D[24 Scrapers]
+    C --> D[27 Scrapers]
     D --> E[Dedup check<br/>db/jobs.db]
     E --> F[Pre-screen<br/>Claude Haiku]
     F -- filtered --> M[filtered_jobs<br/>training data]
@@ -53,8 +53,11 @@ graph LR
 | University of Groningen | Playwright (click-navigate) | ✅ Active (~12/run, first page only) |
 | OECD | SmartRecruiters API | ✅ Active |
 | BIT | requests + BS4 (WordPress) | ✅ Active |
+| EURAXESS MSCA | requests + BS4 (MSCA+R1 filter) | ✅ Active — MSCA Doctoral Networks |
+| jobs.ac.uk | requests + BS4 (search + JSON-LD) | ✅ Active — UK drug-policy research |
 | TNI | — | ❌ Disabled — IP-level 429, manual weekly check ([issue #1](https://github.com/timovanommeren/job_scraper/issues/1)) |
 | UN Careers | — | ❌ CloudFront 403 — [issue #2](https://github.com/timovanommeren/job_scraper/issues/2) |
+| EUDA | — | ❌ Cloudflare block — [issue #23](https://github.com/timovanommeren/job_scraper/issues/23) |
 
 ---
 
