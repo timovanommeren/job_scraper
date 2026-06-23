@@ -293,7 +293,7 @@ The pipeline runs a cheap Claude Haiku pre-screen (Option B) before full LLM ext
 8. **Never push commits to GitHub without being explicitly asked.** Always save locally and present changes for review first.
 9. **Never hardcode score thresholds in source files.** The live gates come from `settings.yaml` (`strong_match_threshold`, `email_also_min_score`), loaded at startup by `notifier/gmail.py:_load_thresholds()`.
 10. **Never overwrite `config/profile.yaml`.** It is updated dynamically based on user feedback. Editing it is fine; replacing it in full is not.
-11. **Never complete a task that adds or removes a file, adds or changes a CLI flag, adds or disables a scraper, modifies the SQLite schema, adds a Flask route, changes how a process starts or stops, or adds a dependency to requirements.txt — without first updating CLAUDE.md and ARCHITECTURE.md to reflect the change.** Documentation updates are not optional housekeeping; they are part of the definition of "done."
+11. **Never complete a task that adds or removes a file, adds or changes a CLI flag, adds or disables a scraper, modifies the SQLite schema, adds a Flask route, changes how a process starts or stops, or adds a dependency to requirements.txt — without first updating CLAUDE.md, ARCHITECTURE.md, and README.md to reflect the change.** Documentation updates are not optional housekeeping; they are part of the definition of "done." README.md is included in this loop — its scraper table and source counts must not drift from the code.
 
 ---
 
@@ -438,8 +438,9 @@ If Worker is stale: `wrangler deploy` (from `cloudflare/worker/`)
 
 - `CLAUDE.md` — update the affected section (current state, tech stack, workflows, NEVER rules, open issues)
 - `ARCHITECTURE.md` — update the file map, data flow, CLI flags table, or route list as relevant
+- `README.md` — the public overview. Update the scraper status table, the source count (intro line + flow diagram), CLI command list, scheduled tasks, or target-roles description whenever a trigger changes them. Keep it human-facing (no internal-only detail), but never let it drift from the code.
 
-**How to do it:** At the end of every task that hits a trigger above, before closing the session, reread the affected sections of both files and edit them to match the current state of the codebase. Do not summarise what you changed — just make the files accurate.
+**How to do it:** At the end of every task that hits a trigger above, before closing the session, reread the affected sections of all three files and edit them to match the current state of the codebase. Do not summarise what you changed — just make the files accurate.
 
 ---
 
