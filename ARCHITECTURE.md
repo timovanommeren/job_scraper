@@ -795,7 +795,7 @@ job_scraper/
     ├── eucareers.py              # EU agency traineeships — Playwright; seasonal (Mar/Oct)
     ├── euraxess.py               # EURAXESS research jobs — ECL article cards (requests)
     ├── euraxess_msca.py          # EURAXESS MSCA Doctoral Networks — MSCA+R1 facet filter (requests)
-    ├── fgv.py                    # DISABLED — original domain defunct
+    ├── fgv.py                    # FGV (Brazil) — Playwright (portal.fgv.br rejects requests TLS)
     ├── impactpool.py             # Impactpool — server-rendered cards (requests + BS4)
     ├── jobs_ac_uk.py             # jobs.ac.uk — keyword HTML search + JSON-LD detail parse (requests)
     ├── jrc.py                    # JRC PhD positions — h3-based parsing (requests + BS4)
@@ -890,7 +890,8 @@ CF_WORKER_SECRET=...                  # Optional; HMAC secret shared with CF Wor
 | `tni.py` | HTTP 429 on every request — IP-level rate limit, not UA-based; disabled, manual weekly check | [#1](https://github.com/timovanommeren/job_scraper/issues/1) |
 | `uncareers.py` | CloudFront (AWS CDN) returns HTTP 403 to all automation | [#2](https://github.com/timovanommeren/job_scraper/issues/2) |
 | `euda.py` | Cloudflare "Just a moment" JS challenge — domain-wide HTTP 403 (incl. sitemap); headless Playwright also fails. High-relevance source; re-probe periodically. | [#23](https://github.com/timovanommeren/job_scraper/issues/23) |
-| `fgv.py` | Playwright only — portal.fgv.br rejects requests TLS — see CLAUDE.md | — |
+
+> Note: `fgv.py` is **not** disabled — it is an active Playwright scraper. It uses Playwright (not requests) only because portal.fgv.br rejects Python's TLS handshake. Verified returning live jobs 2026-06-23.
 
 ### Seasonal scrapers
 
