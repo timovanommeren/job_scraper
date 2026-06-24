@@ -168,3 +168,19 @@ Allow interesting positions to be saved in a "read later" box in the Flask UI.
 **How to apply:** Run `scripts/analyze_criteria_weights.py` (to be written) against `db/jobs.db` to correlate each criterion against final `relevance_score`. Use ridge regression or simple Pearson correlation. Write weights to `config/settings.yaml:criteria_weights`. Update `submit_feedback()` formula.
 
 **Deferred from:** 2026-05-31 (feedback form redesign). Trigger condition: 300+ labeled jobs (same threshold as Option C embedding pre-screening migration).
+
+---
+
+### Proactive run alerting (daily-email status line + missed-run heartbeat) · (deferred, no issue yet)
+
+**What:** Two proactive signals so pipeline health reaches Timo without him remembering to open the health dashboard:
+1. The daily digest email always includes a one-line run status — even when there are no strong matches (e.g. "Ran clean at 07:02, 14 new jobs, nothing strong today").
+2. A lightweight check that flags a *missed* or *failed* run (no `run_log` row for today, or `status=failed`) and notifies (email/push).
+
+**Why:** The health dashboard (see `HEALTH_DASHBOARD_DESIGN.md`) is passive — it only helps if Timo remembers to open it. The original pain ("sometimes I get an email, sometimes I don't, and I'm never sure why") is best solved by the system telling him proactively. The dashboard answers the question when asked; alerting answers it unprompted.
+
+**How to apply:** Reuse the `/api/v1/stats` `last_run` object built for the dashboard (Option 3 reusability payoff). For (1) extend `notifier/gmail.py:build_daily_html()` / `should_send_daily()` so a status line is always present. For (2) a small scheduled check (could ride the existing weekly task or a new Task Scheduler entry) that reads `run_log` and notifies on missing/failed today's run.
+
+**Depends on:** Health dashboard shipped (provides the stats module + `/api/v1/stats`).
+
+**Deferred from:** 2026-06-24 health dashboard /plan-design-review.

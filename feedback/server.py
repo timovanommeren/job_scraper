@@ -17,6 +17,7 @@ GET  /health                 → health check
 import os
 import sys
 import json
+import html
 import logging
 import logging.handlers
 from datetime import date
@@ -212,6 +213,7 @@ textarea.field{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6p
 
 _NAV = """<nav>
   <span class="brand">🎯 Job Scraper</span>
+  <a href="/dashboard">Dashboard</a>
   <a href="/jobs">All Jobs</a>
   <a href="/jobs?tier=strong_match">Strong</a>
   <a href="/jobs?tier=maybe">Maybe</a>
@@ -232,6 +234,181 @@ def _page_html(title: str, body: str) -> str:
 @app.route("/")
 def index():
     return redirect(url_for("job_list"))
+
+
+# ── Health dashboard ─────────────────────────────────────────────────────────
+
+# Verdict pill colours map to the app's existing status palette (never emoji,
+# never colour alone — the pill text carries the meaning too).
+_PILL_COLORS = {
+    "green": ("#dcfce7", "#16a34a", "#bbf7d0"),
+    "amber": ("#fff7ed", "#ea580c", "#fed7aa"),
+    "red":   ("#fef2f2", "#dc2626", "#fecaca"),
+    "slate": ("#f1f5f9", "#64748b", "#e2e8f0"),
+    "blue":  ("#eff6ff", "#2563eb", "#bfdbfe"),
+}
+
+_DASH_CSS = """<style>
+.verdict{padding:20px}
+.verdict .pill{font-size:12px;font-weight:bold;padding:3px 10px;border-radius:10px}
+.verdict .vline{font-size:20px;font-weight:bold;color:#1a1a2e;margin:12px 0 4px;line-height:1.35}
+.section-label{font-size:13px;font-weight:bold;color:#475569;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 8px}
+.kpis{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.kpi{flex:1;min-width:150px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
+.kpi .n{font-size:24px;font-weight:bold;color:#1a1a2e}
+.kpi .l{font-size:12px;color:#64748b;margin-top:2px}
+.bar-row{display:flex;align-items:center;gap:10px;font-size:13px;margin:5px 0}
+.bar-label{width:170px;color:#475569;flex-shrink:0}
+.bar-track{flex:1;background:#f1f5f9;border-radius:4px;height:16px;overflow:hidden}
+.bar-fill{height:100%;background:#2563eb;border-radius:4px}
+.bar-val{width:48px;text-align:right;color:#64748b;flex-shrink:0}
+.kv td:first-child{color:#64748b;width:46%}
+.src-check{color:#dc2626;font-weight:bold}
+.placeholder{color:#94a3b8;font-style:italic;font-size:13px}
+@media(max-width:600px){.bar-label{width:110px}table{display:block;overflow-x:auto}}
+</style>"""
+
+
+def _pill(text: str, color: str) -> str:
+    bg, fg, br = _PILL_COLORS.get(color, _PILL_COLORS["slate"])
+    return (f'<span class="pill" style="background:{bg};color:{fg};'
+            f'border:1px solid {br}">{html.escape(text)}</span>')
+
+
+def _bars(items: list[tuple[str, int]]) -> str:
+    if not items:
+        return '<p class="placeholder">No data yet.</p>'
+    top = max((v for _, v in items), default=0) or 1
+    rows = []
+    for label, val in items:
+        pct = round(100 * val / top)
+        rows.append(
+            f'<div class="bar-row"><span class="bar-label">{html.escape(str(label))}</span>'
+            f'<span class="bar-track"><span class="bar-fill" style="width:{pct}%"></span></span>'
+            f'<span class="bar-val">{val}</span></div>'
+        )
+    return "".join(rows)
+
+
+def _render_dashboard(stats: dict) -> str:
+    lr = stats["last_run"]
+    d = lr.get("detail")
+
+    # ── verdict card ──
+    body = [f'<h2>Last run</h2>',
+            f'<div class="card verdict">{_pill(lr["state"].replace("_", " "), lr["color"])}'
+            f'<div class="vline">{html.escape(lr["message"])}</div></div>']
+
+    # ── last-run detail (calm table, not tiles) ──
+    if d:
+        if d.get("has_tokens"):
+            cost = d.get("est_cost_eur")
+            cost_str = f' · €{cost:.4f}' if cost else ""
+            tokens_cell = f'{d["input_tokens"]:,} in / {d["output_tokens"]:,} out{cost_str}'
+        else:
+            tokens_cell = "not tracked for this run"
+        rows = [
+            ("Started", d["started"] or "—"),
+            ("Duration", d["duration"] or "—"),
+            ("Sites scraped", d["sites_scraped"]),
+            ("New jobs found", d["new_jobs_found"]),
+            ("Scored / filtered", f'{d["jobs_scored"]} / {d["jobs_filtered"]}'),
+            ("Jobs emailed", d["jobs_emailed"]),
+            ("API / pre-screen errors", f'{d["api_errors"]} / {d["pre_screen_errors"]}'),
+            ("Tokens (this run)", tokens_cell),
+        ]
+        trs = "".join(f"<tr><td>{html.escape(k)}</td><td>{html.escape(str(v))}</td></tr>"
+                      for k, v in rows)
+        body.append(f'<table class="kv"><tr><th colspan="2">Run detail</th></tr>{trs}</table>')
+
+        ys = lr.get("source_yields") or []
+        if ys:
+            sy = []
+            for y in ys:
+                note = ""
+                if y["note"] == "check":
+                    note = '<span class="src-check">0 returned — check</span>'
+                elif y["note"]:
+                    note = _pill(y["note"], "slate")
+                cnt = (f'<span class="src-check">{y["count"]}</span>'
+                       if y["note"] == "check" else str(y["count"]))
+                sy.append(f'<tr><td>{html.escape(y["source"])}</td><td>{cnt}</td><td>{note}</td></tr>')
+            body.append('<div class="section-label">Per-source yield</div>'
+                        f'<table><tr><th>Source</th><th>Jobs</th><th>Note</th></tr>{"".join(sy)}</table>')
+
+    # ── 30-day analytics ──
+    a = stats["last_30_days"]
+    runs = a["runs"]
+    sr = f'{runs["success_rate"]}%' if runs["success_rate"] is not None else "—"
+    body.append(f'<h2 style="margin-top:34px">Last {a["window_days"]} days</h2>')
+    body.append(
+        '<div class="kpis">'
+        f'<div class="kpi"><div class="n">{sr}</div><div class="l">Run success rate '
+        f'({runs["days_with_run"]} days ran, {runs["missed_days"]} missed)</div></div>'
+        f'<div class="kpi"><div class="n">{a["strong_total"]}</div><div class="l">Strong matches found</div></div>'
+        f'<div class="kpi"><div class="n">{a["upcoming_deadlines"]}</div><div class="l">Deadlines next 14 days</div></div>'
+        '</div>'
+    )
+
+    body.append('<div class="card"><div class="section-label" style="margin-top:0">'
+                'Strong matches by type — "were they all PhDs?"</div>'
+                + _bars(sorted(a["by_type"].items(), key=lambda kv: -kv[1])) + '</div>')
+
+    body.append('<div class="card"><div class="section-label" style="margin-top:0">'
+                'Top sources by strong matches</div>'
+                + _bars([(s["source"], s["count"]) for s in a["top_sources"]]) + '</div>')
+
+    dist = a["score_distribution"]
+    body.append('<div class="card"><div class="section-label" style="margin-top:0">'
+                'Score distribution</div>'
+                + _bars([(k, dist[k]) for k in ("8-10", "6-7", "4-5", "1-3")]) + '</div>')
+
+    fb = a["feedback"]
+    avg = f'{fb["avg_rating"]} / 10' if fb["avg_rating"] is not None else "—"
+    sp = a["spend"]
+    if not sp.get("instrumented"):
+        spend = ('<span class="placeholder">Cost tracking not yet instrumented '
+                 '(applied on next server restart).</span>')
+    elif not sp.get("has_data"):
+        spend = ('<span class="placeholder">No token data captured yet — '
+                 'fills in from the next run.</span>')
+    else:
+        avg_job = (f' &middot; €{sp["avg_cost_per_job"]:.4f}/job scored'
+                   if sp.get("avg_cost_per_job") else "")
+        spend = (f'€{sp["cost_eur"]:.4f} &middot; {sp["total_tokens"]:,} tokens '
+                 f'({sp["input_tokens"]:,} in / {sp["output_tokens"]:,} out){avg_job}')
+    body.append(
+        '<table class="kv"><tr><th colspan="2">Engagement &amp; spend</th></tr>'
+        f'<tr><td>Ratings received</td><td>{fb["count"]} &middot; avg {avg}</td></tr>'
+        f'<tr><td>Jobs viewed</td><td>{fb["views"]}</td></tr>'
+        f'<tr><td>API spend ({a["window_days"]}d)</td><td>{spend}</td></tr>'
+        '</table>'
+    )
+
+    return _DASH_CSS + "".join(body)
+
+
+@app.route("/dashboard")
+def dashboard():
+    from feedback.stats import compute_stats
+    try:
+        stats = compute_stats(_get_db())
+        return _page_html("Dashboard", _render_dashboard(stats))
+    except Exception:
+        log.exception("dashboard render failed")
+        return _page_html("Dashboard",
+                          '<h2>Dashboard</h2><p class="placeholder">'
+                          'Could not load stats — see server.log.</p>'), 500
+
+
+@app.route("/api/v1/stats")
+def api_stats():
+    from feedback.stats import compute_stats
+    try:
+        return jsonify(compute_stats(_get_db()))
+    except Exception:
+        log.exception("api_stats failed")
+        return jsonify({"error": "stats_unavailable"}), 500
 
 
 def _load_strong_threshold() -> int:
@@ -1012,6 +1189,16 @@ if __name__ == "__main__":
         if s.connect_ex(("127.0.0.1", 5001)) == 0:
             log.info("Port 5001 already in use — another server instance is running. Exiting.")
             sys.exit(0)
+
+    # ── Apply pending migrations on startup ──────────────────────────────────────
+    # init_db() is idempotent. Running it here means restarting the always-on
+    # server picks up schema changes (e.g. dashboard token columns) without a
+    # manual migrate step — and the dashboard never hits a missing-column 500.
+    try:
+        from db.migrations import init_db
+        init_db()
+    except Exception:
+        log.exception("init_db() at startup failed — dashboard stats may be unavailable")
 
     # ── Tunnel health check ────────────────────────────────────────────────────
     _tunnel_url = os.environ.get("FLASK_API_URL", "")

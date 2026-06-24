@@ -203,7 +203,29 @@ class _PreScreenResult(BaseModel):
     reason: str = Field(description="One sentence explaining the classification decision.")
 
 
-def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job") -> tuple[bool, str]:
+def _record_usage(completion, usage_sink) -> None:
+    """Append one call's token usage to an optional caller-owned accumulator.
+
+    usage_sink is a list the caller passes in (e.g. main.py's score loop). We
+    return per-call usage by appending here and let the caller sum it — no
+    module-level state, so the concurrent backfill path can't race a shared
+    counter. A None sink is a no-op (existing callers/tests are unaffected).
+    """
+    if usage_sink is None or completion is None:
+        return
+    u = getattr(completion, "usage", None)
+    if u is None:
+        return
+    usage_sink.append({
+        "input_tokens": getattr(u, "input_tokens", 0) or 0,
+        "output_tokens": getattr(u, "output_tokens", 0) or 0,
+        "cache_read_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
+    })
+
+
+def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job",
+               usage_sink: list | None = None) -> tuple[bool, str]:
     """
     Cheap domain field-check before full LLM extraction.
     Returns (True, reason) if the item should proceed to scoring.
@@ -212,6 +234,9 @@ def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job"
 
     content_type dispatches to the appropriate question in _PRESCREEN_PROMPTS.
     Unknown types fall back to the 'job' prompt so new scrapers fail safe.
+
+    usage_sink: optional list; if given, this call's token usage is appended to
+    it (for the health dashboard's per-run token totals).
     """
     model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     max_chars = 300
@@ -222,13 +247,14 @@ def pre_screen(raw_job, client: instructor.Instructor, content_type: str = "job"
         f"{question}"
     )
     try:
-        result = client.chat.completions.create(
+        result, completion = client.chat.completions.create_with_completion(
             model=model,
             max_tokens=150,  # instructor uses tool_use JSON wrapper (~70 tokens overhead); actual output ~105 tokens
             messages=[{"role": "user", "content": user_content}],
             system=PRESCREEN_SYSTEM_PROMPT,
             response_model=_PreScreenResult,
         )
+        _record_usage(completion, usage_sink)
         return result.relevant, result.reason
     except Exception:
         logger.warning(f"pre_screen failed for {raw_job.url!r} — failing open")
@@ -250,10 +276,13 @@ def build_client() -> instructor.Instructor:
     wait=wait_exponential(multiplier=1, min=5, max=60),
     retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
 )
-def extract_and_score(raw_job, client: instructor.Instructor) -> "JobPosting":
+def extract_and_score(raw_job, client: instructor.Instructor,
+                      usage_sink: list | None = None) -> "JobPosting":
     """
     Single Claude API call: raw job text → structured JobPosting with relevance score.
     Raises on persistent API failure after 3 retries.
+
+    usage_sink: optional list; if given, this call's token usage is appended.
     """
     model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
     max_chars = int(os.environ.get("RAW_TEXT_MAX_CHARS", 4000))
@@ -275,23 +304,25 @@ Look for phrases like 'apply by', 'closing date', 'deadline', 'applications clos
 'vacancy closes', 'uiterste sollicitatiedatum', 'sluitingsdatum'.
 Return as YYYY-MM-DD. If no deadline is found or it is ambiguous, return null."""
 
-    posting = client.chat.completions.create(
+    posting, completion = client.chat.completions.create_with_completion(
         model=model,
         max_tokens=600,
         messages=[{"role": "user", "content": user_content}],
         system=[{"type": "text", "text": _get_full_system_prompt(), "cache_control": {"type": "ephemeral"}}],
         response_model=JobPosting,
     )
+    _record_usage(completion, usage_sink)
     return posting
 
 
-def safe_extract_and_score(raw_job, client: instructor.Instructor) -> "JobPosting | None":
+def safe_extract_and_score(raw_job, client: instructor.Instructor,
+                           usage_sink: list | None = None) -> "JobPosting | None":
     """
     Wrapper that catches all exceptions, logs them, returns None on failure.
     Caller is responsible for storing failures to failed_extractions table.
     """
     try:
-        return extract_and_score(raw_job, client)
+        return extract_and_score(raw_job, client, usage_sink=usage_sink)
     except Exception:
         logger.exception(f"Extraction failed for {raw_job.url}")
         return None

@@ -210,17 +210,26 @@ def log_run_finish(
     status: str,
     conn: sqlite3.Connection,
     source_yields: dict | None = None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    est_cost_eur: float = 0.0,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """UPDATE run_log SET
            finished_at=?, sites_scraped=?, new_jobs_found=?,
            jobs_scored=?, jobs_filtered=?, jobs_emailed=?,
-           api_errors=?, pre_screen_errors=?, status=?, source_yields=?
+           api_errors=?, pre_screen_errors=?, status=?, source_yields=?,
+           input_tokens=?, output_tokens=?, cache_read_tokens=?,
+           cache_creation_tokens=?, est_cost_eur=?
            WHERE id=?""",
         (now, sites_scraped, new_jobs_found, jobs_scored, jobs_filtered,
          jobs_emailed, api_errors, pre_screen_errors, status,
-         json.dumps(source_yields or {}), run_id),
+         json.dumps(source_yields or {}),
+         input_tokens, output_tokens, cache_read_tokens,
+         cache_creation_tokens, est_cost_eur, run_id),
     )
     conn.commit()
 
