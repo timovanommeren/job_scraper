@@ -28,6 +28,11 @@ pre_filter:
 source_recommender:
   min_jobs: 5   # minimum high-rated jobs (score >= 8) needed to trigger suggestions
 
+dashboard:
+  analytics_window_days: 30   # window for the /dashboard 30-day analytics panel
+  scheduled_run_time: "07:00" # local time the daily scrape is expected (verdict boundary)
+  # pricing: (added in the token-instrumentation PR) per-model token rates for cost
+
 logging:
   level: INFO
   max_bytes: 5242880

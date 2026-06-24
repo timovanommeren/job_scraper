@@ -566,6 +566,8 @@ The `JobScraperFeedbackServer` Windows Task Scheduler task runs `pythonw.exe fee
 | Method | Route | Description |
 |---|---|---|
 | `GET` | `/` | Redirect to `/jobs` |
+| `GET` | `/dashboard` | Health dashboard — last-run verdict (schedule-aware "did it run / why no email") + 30-day analytics. Read-only; stats from `feedback/stats.py:compute_stats()`. Renders with an empty DB (no 500). |
+| `GET` | `/api/v1/stats` | JSON `{last_run, last_30_days}` from the same `compute_stats()` — reusable data tap (localhost-only, no auth, like `/health`). |
 | `GET` | `/jobs` | Paginated job list; accepts `?tier=strong_match\|maybe\|not_relevant\|all` and `?page=N` |
 | `GET` | `/jobs/<id>` | Job detail page with score/tags/snippet + feedback form (5 criterion sliders). Accepts `?feedback=error` for write-fail banner. |
 | `POST` | `/jobs/<id>/feedback` | Submit feedback; writes to both SQLite `feedback` table and `feedback_store.json`. On SQLite failure redirects back with `?feedback=error` banner. |
@@ -767,7 +769,9 @@ job_scraper/
 │   ├── feedback_store.json       # Flat JSON log of like/pass actions (for prompt calibration)
 │   ├── profile_updater.py        # generate_prompt_additions() + build_feedback_footer_html()
 │   │                             #   + update_liked_organizations() (writes liked_organizations to profile.yaml)
-│   ├── server.py                 # Flask app (port 5001): job browser + feedback form
+│   ├── server.py                 # Flask app (port 5001): job browser + feedback form + /dashboard; calls init_db() at startup
+│   ├── stats.py                  # Health dashboard stats: compute_stats(conn) → {last_run, last_30_days}
+│   │                             #   verdict logic (schedule-aware); reuses dedup.get_run_stats() for run_log
 │   ├── source_recommender.py     # Weekly field-intelligence: high-rated jobs → org suggestions
 │   │                             #   generate_suggestions(db, client, test_mode) → SourceRecommendation
 │   │                             #   SOURCE_NAME_TO_DISPLAY maps scraper slugs → display names

@@ -39,6 +39,8 @@ python main.py --reprocess <N>             # Re-score last N rows from failed_ex
 ### Local Interfaces
 
 - Flask job browser: `http://localhost:5001` (auto-starts at Windows logon)
+- Health dashboard: `http://localhost:5001/dashboard` — last-run verdict ("did it run, and if no email, why not?") + 30-day analytics. Read-only; stats computed in `feedback/stats.py` (shared with the JSON endpoint below).
+- Stats API: `http://localhost:5001/api/v1/stats` — JSON `{last_run, last_30_days}` mirroring the dashboard (reusable by future tooling/email).
 - Settings page: `http://localhost:5001/settings` — edit pipeline parameters without touching YAML files
 - Health check: `http://localhost:5001/health`
 
@@ -152,6 +154,7 @@ CF_WORKER_SECRET         # Optional. Shared HMAC secret (set via wrangler secret
 - Change the email template or subject line → `notifier/gmail.py:build_daily_html()` / `send_weekly_digest()`
 - Change the rating row (number pills) in email → `notifier/gmail.py:job_html()` + `_feedback_action_url()`
 - Add or modify Flask routes → `feedback/server.py`
+- Change the health dashboard or its stats → `feedback/stats.py` (`compute_stats(conn) -> dict`, shared by `/dashboard` and `/api/v1/stats`); run-log aggregation is delegated to `db/dedup.py:get_run_stats()` (single source). Dashboard config (`analytics_window_days`, `scheduled_run_time`) is in `config/settings.yaml:dashboard`. Token/cost columns are NOT yet added — the spend tile shows a placeholder until the instrumentation PR.
 - Add a new scraper → `scrapers/` + register in `main.py:build_scraper_registry()`
 - Change what gets inserted into the DB → `db/dedup.py:insert_job()` + `db/schema.sql`
 - Change how feedback affects scoring → `feedback/profile_updater.py:generate_prompt_additions()`
