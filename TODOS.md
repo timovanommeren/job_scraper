@@ -171,7 +171,7 @@ Allow interesting positions to be saved in a "read later" box in the Flask UI.
 
 ---
 
-### Proactive run alerting (daily-email status line + missed-run heartbeat) · (deferred, no issue yet)
+### Proactive run alerting (daily-email status line + missed-run heartbeat) · [#25](https://github.com/timovanommeren/job_scraper/issues/25)
 
 **What:** Two proactive signals so pipeline health reaches Timo without him remembering to open the health dashboard:
 1. The daily digest email always includes a one-line run status — even when there are no strong matches (e.g. "Ran clean at 07:02, 14 new jobs, nothing strong today").
