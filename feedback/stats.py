@@ -72,7 +72,31 @@ def _load_cfg() -> dict:
         "window_days": int(dash.get("analytics_window_days", 30)),
         "scheduled_time": str(dash.get("scheduled_run_time", "07:00")),
         "strong_threshold": int((cfg.get("filtering", {}) or {}).get("strong_match_threshold", 6)),
+        "pricing": dash.get("pricing", {}) or {},
+        "usd_to_eur": float(dash.get("usd_to_eur", 0.92)),
     }
+
+
+def compute_cost_eur(usage: dict, model: str | None = None, cfg: dict | None = None) -> float | None:
+    """Estimate euro cost from a token-usage dict and the per-model pricing map.
+
+    Returns None when the model has no pricing entry (unknown / overridden
+    CLAUDE_MODEL) — caller shows "not configured" rather than a wrong number.
+    Token counts are always kept regardless; only the euro figure is gated.
+    """
+    cfg = cfg or _load_cfg()
+    model = model or "claude-haiku-4-5-20251001"
+    rates = (cfg.get("pricing") or {}).get(model)
+    if not rates:
+        return None
+    usd_to_eur = cfg.get("usd_to_eur", 0.92)
+    usd = (
+        (usage.get("input_tokens", 0) or 0) / 1e6 * rates.get("input_per_mtok", 0)
+        + (usage.get("output_tokens", 0) or 0) / 1e6 * rates.get("output_per_mtok", 0)
+        + (usage.get("cache_creation_tokens", 0) or 0) / 1e6 * rates.get("cache_write_per_mtok", 0)
+        + (usage.get("cache_read_tokens", 0) or 0) / 1e6 * rates.get("cache_read_per_mtok", 0)
+    )
+    return round(usd * usd_to_eur, 4)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -133,6 +157,10 @@ def _last_run_detail(row) -> dict:
     if started and finished:
         secs = int((finished - started).total_seconds())
         duration = f"{secs // 60}m {secs % 60}s"
+    cols = row.keys()
+    in_tok = (row["input_tokens"] if "input_tokens" in cols else 0) or 0
+    out_tok = (row["output_tokens"] if "output_tokens" in cols else 0) or 0
+    cost = (row["est_cost_eur"] if "est_cost_eur" in cols else None)
     return {
         "started": started.strftime("%Y-%m-%d %H:%M:%S") if started else None,
         "duration": duration,
@@ -144,6 +172,10 @@ def _last_run_detail(row) -> dict:
         "api_errors": row["api_errors"] or 0,
         "pre_screen_errors": row["pre_screen_errors"] or 0,
         "status": row["status"],
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "est_cost_eur": cost,
+        "has_tokens": (in_tok + out_tok) > 0,
     }
 
 
@@ -319,6 +351,8 @@ def compute_30d(conn, cfg: dict, now: datetime | None = None) -> dict:
         (today, horizon),
     ).fetchone()["n"]
 
+    spend = _compute_spend(conn, cutoff_date, run_stats["total_scored"])
+
     n_runs = run_stats["n_runs"]
     failed = run_stats["failed_runs"]
     return {
@@ -341,8 +375,42 @@ def compute_30d(conn, cfg: dict, now: datetime | None = None) -> dict:
         },
         "upcoming_deadlines": deadlines,
         "labeled_count": run_stats["labeled_count"],
-        # Token/cost instrumentation lands in a later PR (see design doc).
-        "spend": {"instrumented": False},
+        "spend": spend,
+    }
+
+
+def _compute_spend(conn, cutoff_date: str, total_scored: int) -> dict:
+    """Aggregate per-run token usage + estimated euro cost over the window.
+
+    Tolerates a pre-migration DB (no token columns) and pre-instrumentation rows
+    (NULL/0 tokens) — in both cases instrumented is True but has_data is False, so
+    the dashboard shows a "no token data yet" note rather than a fake €0.00.
+    """
+    try:
+        row = conn.execute(
+            """SELECT COALESCE(SUM(input_tokens),0)    AS in_tok,
+                      COALESCE(SUM(output_tokens),0)    AS out_tok,
+                      COALESCE(SUM(cache_read_tokens),0) AS cr_tok,
+                      COALESCE(SUM(cache_creation_tokens),0) AS cc_tok,
+                      COALESCE(SUM(est_cost_eur),0)     AS cost
+               FROM run_log WHERE substr(started_at,1,10) >= ?""",
+            (cutoff_date,),
+        ).fetchone()
+    except Exception:
+        # Columns not present yet (migration hasn't run) — instrument on next restart.
+        return {"instrumented": False}
+
+    in_tok, out_tok = row["in_tok"] or 0, row["out_tok"] or 0
+    total_tok = in_tok + out_tok + (row["cr_tok"] or 0) + (row["cc_tok"] or 0)
+    cost = round(row["cost"] or 0, 4)
+    return {
+        "instrumented": True,
+        "has_data": total_tok > 0,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "total_tokens": total_tok,
+        "cost_eur": cost,
+        "avg_cost_per_job": round(cost / total_scored, 4) if total_scored else None,
     }
 
 

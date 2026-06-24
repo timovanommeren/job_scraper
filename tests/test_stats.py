@@ -28,23 +28,29 @@ def conn():
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
     c.executescript(_SCHEMA)
-    # source_yields is added in production via migrations.py, not schema.sql.
+    # These columns are added in production via migrations.py, not schema.sql.
     c.execute("ALTER TABLE run_log ADD COLUMN source_yields TEXT")
+    for col in ("input_tokens", "output_tokens", "cache_read_tokens",
+                "cache_creation_tokens"):
+        c.execute(f"ALTER TABLE run_log ADD COLUMN {col} INTEGER DEFAULT 0")
+    c.execute("ALTER TABLE run_log ADD COLUMN est_cost_eur REAL DEFAULT 0")
     return c
 
 
 def _add_run(conn, *, started, finished="default", status="success",
              new=0, scored=0, filtered=0, emailed=0, api_err=0, ps_err=0,
-             source_yields=None):
+             source_yields=None, in_tok=0, out_tok=0, cost=0.0):
     if finished == "default":
         finished = started  # finished == started by default (clean, instantaneous)
     conn.execute(
         """INSERT INTO run_log
            (started_at, finished_at, sites_scraped, new_jobs_found, jobs_scored,
-            jobs_filtered, jobs_emailed, api_errors, pre_screen_errors, status, source_yields)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            jobs_filtered, jobs_emailed, api_errors, pre_screen_errors, status,
+            source_yields, input_tokens, output_tokens, est_cost_eur)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (started.isoformat(), finished.isoformat() if finished else None,
-         24, new, scored, filtered, emailed, api_err, ps_err, status, source_yields),
+         24, new, scored, filtered, emailed, api_err, ps_err, status, source_yields,
+         in_tok, out_tok, cost),
     )
     conn.commit()
 
@@ -168,9 +174,45 @@ def test_upcoming_deadlines(conn):
     assert a["upcoming_deadlines"] == 1
 
 
-def test_spend_not_instrumented_in_pr1(conn):
+def test_spend_aggregates_tokens_and_cost(conn):
+    _add_run(conn, started=NOW, status="success", scored=5, in_tok=1000, out_tok=200, cost=0.05)
+    _add_run(conn, started=NOW, status="success", scored=5, in_tok=2000, out_tok=300, cost=0.07)
     a = compute_30d(conn, CFG, now=NOW)
-    assert a["spend"] == {"instrumented": False}
+    sp = a["spend"]
+    assert sp["instrumented"] is True and sp["has_data"] is True
+    assert sp["input_tokens"] == 3000 and sp["output_tokens"] == 500
+    assert sp["cost_eur"] == pytest.approx(0.12)
+
+
+def test_spend_instrumented_but_no_data(conn):
+    # A run with zero tokens (e.g. pre-instrumentation row) → instrumented, no data.
+    _add_run(conn, started=NOW, status="success", in_tok=0, out_tok=0)
+    sp = compute_30d(conn, CFG, now=NOW)["spend"]
+    assert sp["instrumented"] is True and sp["has_data"] is False
+
+
+# ── Cost function ────────────────────────────────────────────────────────────
+
+COST_CFG = {
+    "pricing": {"claude-haiku-4-5-20251001": {
+        "input_per_mtok": 1.0, "output_per_mtok": 5.0,
+        "cache_write_per_mtok": 1.25, "cache_read_per_mtok": 0.10}},
+    "usd_to_eur": 0.92,
+}
+
+
+def test_cost_known_model():
+    from feedback.stats import compute_cost_eur
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000,
+             "cache_read_tokens": 0, "cache_creation_tokens": 0}
+    # (1*1.0 + 1*5.0) USD * 0.92 = 5.52 EUR
+    assert compute_cost_eur(usage, "claude-haiku-4-5-20251001", COST_CFG) == pytest.approx(5.52)
+
+
+def test_cost_unknown_model_returns_none():
+    from feedback.stats import compute_cost_eur
+    usage = {"input_tokens": 1_000_000, "output_tokens": 0}
+    assert compute_cost_eur(usage, "some-future-model", COST_CFG) is None
 
 
 # ── Empty DB (first run must not crash) ──────────────────────────────────────

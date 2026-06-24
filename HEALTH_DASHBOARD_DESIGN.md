@@ -327,8 +327,17 @@ top-3 KPIs. This is the visual reference to build from.
 > full suite 180 passing). New: `feedback/stats.py`, `tests/test_stats.py`,
 > `tests/test_dashboard_routes.py`; `config/settings.yaml:dashboard`; `/dashboard`
 > + `/api/v1/stats` routes; `Dashboard` nav link; `init_db()` at Flask startup.
-> **PR 2 (pending):** token/cost instrumentation — T5 + E1 (spike), E5, E6. Until
-> then the spend tile shows a placeholder.
+> **PR 2 SHIPPED (2026-06-24):** token/cost instrumentation. E1 spike confirmed
+> `create_with_completion().usage` (fields: input/output/cache_read_input/
+> cache_creation_input; `inference_geo='not_available'` so caching still inactive
+> on Haiku 4.5, as known). T5/E5: 5 token columns on `run_log` via
+> `_safe_add_column`; `extract_and_score`/`pre_screen` switched to
+> `create_with_completion` and append usage to a caller-owned sink; `main.py` sums
+> and stores per run. E6: pricing map in `config/settings.yaml:dashboard.pricing`,
+> `compute_cost_eur()` with unknown-model fallback. Dashboard spend tile + last-run
+> tokens now live. +4 tests (cost known/unknown, spend aggregate, usage capture);
+> full suite 184 passing. Spend shows "no data yet" until the next pipeline run
+> writes token totals.
 
 Synthesized from the design review. Each derives from a finding above.
 

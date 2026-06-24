@@ -27,6 +27,9 @@ def temp_db(tmp_path, monkeypatch):
     init = sqlite3.connect(db_path)
     init.executescript(_SCHEMA)
     init.execute("ALTER TABLE run_log ADD COLUMN source_yields TEXT")
+    for col in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+        init.execute(f"ALTER TABLE run_log ADD COLUMN {col} INTEGER DEFAULT 0")
+    init.execute("ALTER TABLE run_log ADD COLUMN est_cost_eur REAL DEFAULT 0")
     init.commit()
     init.close()
 
@@ -89,4 +92,5 @@ def test_api_stats_with_data(client, temp_db):
     _seed_run(temp_db)
     data = client.get("/api/v1/stats").get_json()
     assert data["last_run"]["state"] in ("SENT", "NO_EMAIL", "NOTHING_NEW")
-    assert data["last_30_days"]["spend"] == {"instrumented": False}
+    # token columns exist in the fixture → instrumented; seeded run has 0 tokens → no data
+    assert data["last_30_days"]["spend"]["instrumented"] is True

@@ -301,6 +301,12 @@ def _render_dashboard(stats: dict) -> str:
 
     # ── last-run detail (calm table, not tiles) ──
     if d:
+        if d.get("has_tokens"):
+            cost = d.get("est_cost_eur")
+            cost_str = f' · €{cost:.4f}' if cost else ""
+            tokens_cell = f'{d["input_tokens"]:,} in / {d["output_tokens"]:,} out{cost_str}'
+        else:
+            tokens_cell = "not tracked for this run"
         rows = [
             ("Started", d["started"] or "—"),
             ("Duration", d["duration"] or "—"),
@@ -309,6 +315,7 @@ def _render_dashboard(stats: dict) -> str:
             ("Scored / filtered", f'{d["jobs_scored"]} / {d["jobs_filtered"]}'),
             ("Jobs emailed", d["jobs_emailed"]),
             ("API / pre-screen errors", f'{d["api_errors"]} / {d["pre_screen_errors"]}'),
+            ("Tokens (this run)", tokens_cell),
         ]
         trs = "".join(f"<tr><td>{html.escape(k)}</td><td>{html.escape(str(v))}</td></tr>"
                       for k, v in rows)
@@ -358,14 +365,23 @@ def _render_dashboard(stats: dict) -> str:
 
     fb = a["feedback"]
     avg = f'{fb["avg_rating"]} / 10' if fb["avg_rating"] is not None else "—"
-    spend = ('<span class="placeholder">Cost tracking not yet instrumented '
-             '(starts after the next pipeline update).</span>'
-             if not a["spend"].get("instrumented") else "")
+    sp = a["spend"]
+    if not sp.get("instrumented"):
+        spend = ('<span class="placeholder">Cost tracking not yet instrumented '
+                 '(applied on next server restart).</span>')
+    elif not sp.get("has_data"):
+        spend = ('<span class="placeholder">No token data captured yet — '
+                 'fills in from the next run.</span>')
+    else:
+        avg_job = (f' &middot; €{sp["avg_cost_per_job"]:.4f}/job scored'
+                   if sp.get("avg_cost_per_job") else "")
+        spend = (f'€{sp["cost_eur"]:.4f} &middot; {sp["total_tokens"]:,} tokens '
+                 f'({sp["input_tokens"]:,} in / {sp["output_tokens"]:,} out){avg_job}')
     body.append(
         '<table class="kv"><tr><th colspan="2">Engagement &amp; spend</th></tr>'
         f'<tr><td>Ratings received</td><td>{fb["count"]} &middot; avg {avg}</td></tr>'
         f'<tr><td>Jobs viewed</td><td>{fb["views"]}</td></tr>'
-        f'<tr><td>API spend</td><td>{spend}</td></tr>'
+        f'<tr><td>API spend ({a["window_days"]}d)</td><td>{spend}</td></tr>'
         '</table>'
     )
 

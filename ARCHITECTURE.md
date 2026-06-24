@@ -205,7 +205,7 @@ scripts/generate_worker_form.py  (run by wrangler deploy via [build] hook)
 1. `load_settings()` — reads `config/settings.yaml` into a dict
 2. `setup_logging()` — configures `RotatingFileHandler` → `logs/scraper.log` + `StreamHandler` → stdout
 3. `_check_network()` — TCP probe to `8.8.8.8:53` (3 s timeout); if offline, writes a `run_log` row with `status='no_network'` and exits with code 1 (skipped for `--test`, `--dry-run`, `--site`, `--weekly-digest`, `--backfill-deadlines`, `--reprocess`)
-4. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors`, `content_hash`, `source_yields` columns if missing
+4. `db.migrations.init_db()` — runs `schema.sql` idempotently; adds `deadline`, `jobs_filtered`, `pre_screen_errors`, `content_hash`, `source_yields`, and the run_log token/cost columns (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `est_cost_eur`) if missing
 5. `db.dedup.get_connection()` — opens SQLite connection with WAL mode and row_factory
 6. `agents.extractor_scorer.build_client()` — creates `instructor.from_anthropic(Anthropic(api_key=...))`
 7. `log_run_start(conn)` — inserts a row into `run_log` table, returns `run_id`
@@ -487,6 +487,11 @@ api_errors          INTEGER    -- full-scoring API failures
 pre_screen_errors   INTEGER    -- pre_screen() exceptions (fail-open; non-zero = filter degraded)
 status              TEXT       -- success | partial | failed | no_network
 source_yields       TEXT       -- JSON dict: {"euraxess": 23, "uu": 0, ...} — per-source fetch counts
+input_tokens        INTEGER    -- per-run Anthropic token usage (dashboard spend tile)
+output_tokens       INTEGER
+cache_read_tokens   INTEGER
+cache_creation_tokens INTEGER
+est_cost_eur        REAL       -- estimated euro cost (feedback/stats.py:compute_cost_eur)
 ```
 
 **`filtered_jobs`** — jobs rejected by Layer 2 pre-screen before full scoring
@@ -772,6 +777,7 @@ job_scraper/
 │   ├── server.py                 # Flask app (port 5001): job browser + feedback form + /dashboard; calls init_db() at startup
 │   ├── stats.py                  # Health dashboard stats: compute_stats(conn) → {last_run, last_30_days}
 │   │                             #   verdict logic (schedule-aware); reuses dedup.get_run_stats() for run_log
+│   │                             #   compute_cost_eur(usage, model) — euro cost from token usage + pricing map
 │   ├── source_recommender.py     # Weekly field-intelligence: high-rated jobs → org suggestions
 │   │                             #   generate_suggestions(db, client, test_mode) → SourceRecommendation
 │   │                             #   SOURCE_NAME_TO_DISPLAY maps scraper slugs → display names

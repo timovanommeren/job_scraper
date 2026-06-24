@@ -31,7 +31,16 @@ source_recommender:
 dashboard:
   analytics_window_days: 30   # window for the /dashboard 30-day analytics panel
   scheduled_run_time: "07:00" # local time the daily scrape is expected (verdict boundary)
-  # pricing: (added in the token-instrumentation PR) per-model token rates for cost
+  usd_to_eur: 0.92            # FX factor applied to USD token prices
+  # Per-model Anthropic token prices in USD per million tokens. Keyed by model id
+  # (must match CLAUDE_MODEL). Unknown models → cost shown as "not configured",
+  # tokens still tracked (never crashes). Update when Anthropic pricing changes.
+  pricing:
+    claude-haiku-4-5-20251001:
+      input_per_mtok: 1.00
+      output_per_mtok: 5.00
+      cache_write_per_mtok: 1.25
+      cache_read_per_mtok: 0.10
 
 logging:
   level: INFO

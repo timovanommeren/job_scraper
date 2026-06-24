@@ -77,11 +77,16 @@ def raw_job_outfield():
 
 
 def _make_mock_client(relevant: bool, reason: str = "Test reason."):
-    """Build an instructor-style mock client that returns a _PreScreenResult."""
+    """Build an instructor-style mock client.
+
+    pre_screen() now uses create_with_completion(), which returns
+    (parsed_model, raw_completion); the second element carries token usage.
+    """
     from agents.extractor_scorer import _PreScreenResult
     mock = MagicMock()
-    mock.chat.completions.create.return_value = _PreScreenResult(
-        relevant=relevant, reason=reason
+    mock.chat.completions.create_with_completion.return_value = (
+        _PreScreenResult(relevant=relevant, reason=reason),
+        MagicMock(),  # raw completion (usage unused when usage_sink is None)
     )
     return mock
 
@@ -107,10 +112,25 @@ class TestPreScreen:
     def test_fail_open_on_api_exception(self, raw_job_infield):
         from agents.extractor_scorer import pre_screen
         client = MagicMock()
-        client.chat.completions.create.side_effect = Exception("API down")
+        client.chat.completions.create_with_completion.side_effect = Exception("API down")
         passed, reason = pre_screen(raw_job_infield, client)
         assert passed is True
         assert reason == "pre_screen_error"
+
+    def test_records_usage_to_sink(self, raw_job_infield):
+        from types import SimpleNamespace
+        from agents.extractor_scorer import _PreScreenResult, pre_screen
+        usage = SimpleNamespace(input_tokens=120, output_tokens=30,
+                                cache_read_input_tokens=0, cache_creation_input_tokens=0)
+        client = MagicMock()
+        client.chat.completions.create_with_completion.return_value = (
+            _PreScreenResult(relevant=True, reason="ok"),
+            SimpleNamespace(usage=usage),
+        )
+        sink: list = []
+        pre_screen(raw_job_infield, client, usage_sink=sink)
+        assert sink == [{"input_tokens": 120, "output_tokens": 30,
+                         "cache_read_tokens": 0, "cache_creation_tokens": 0}]
 
 
 # ── is_seen tests ──────────────────────────────────────────────────────────────

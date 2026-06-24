@@ -158,11 +158,16 @@ def run_scrapers(settings: dict, site_filter: str | None = None) -> tuple[list, 
     return all_jobs, source_yields
 
 
-def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple:
+def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False,
+                   usage_sink: list | None = None) -> tuple:
     """
     For each RawJob: dedup → pre_screen → extract_and_score → insert.
     Returns (new_postings, api_error_count, jobs_filtered_count, pre_screen_error_count).
     In dry_run mode, scores but does NOT insert into DB.
+
+    usage_sink: optional caller-owned list. When provided, each Claude call appends
+    its token usage to it (summed by the caller for the run_log spend columns).
+    The loop is sequential, so a plain list is safe — no lock needed.
     """
     from db.dedup import is_seen, update_last_seen, insert_job, insert_failed, insert_filtered
     from agents.extractor_scorer import safe_extract_and_score, pre_screen
@@ -186,7 +191,7 @@ def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple
             continue  # do NOT call update_last_seen — job is not in jobs table
 
         # Layer 2: cheap field-check before full LLM extraction.
-        passed, reason = pre_screen(raw, client)
+        passed, reason = pre_screen(raw, client, usage_sink=usage_sink)
         if reason == "pre_screen_error":
             pre_screen_errors += 1
         if not passed:
@@ -195,7 +200,7 @@ def score_new_jobs(raw_jobs: list, conn, client, dry_run: bool = False) -> tuple
                 insert_filtered(raw, "pre_screen", reason, conn)
             continue
 
-        posting = safe_extract_and_score(raw, client)
+        posting = safe_extract_and_score(raw, client, usage_sink=usage_sink)
         if posting is None:
             api_errors += 1
             if not dry_run:
@@ -376,6 +381,7 @@ def main(
     pre_screen_err = 0
     emailed_count = 0
     source_yields: dict = {}
+    token_usage: list = []   # caller-owned sink; each Claude call appends its usage
     status = "success"
 
     try:
@@ -400,7 +406,7 @@ def main(
         logger.info(f"Total raw jobs fetched: {len(raw_jobs)} from {sites_scraped} sources")
 
         new_postings, api_errors, filtered_count, pre_screen_err = score_new_jobs(
-            raw_jobs, conn, client, dry_run=test_mode or dry_run
+            raw_jobs, conn, client, dry_run=test_mode or dry_run, usage_sink=token_usage
         )
         scored_count = len(new_postings)
         new_count = scored_count + api_errors
@@ -429,6 +435,19 @@ def main(
         logger.exception("Fatal error in main()")
         status = "failed"
     finally:
+        # Sum the per-call token usage and estimate the run's euro cost.
+        tok = {
+            "input_tokens": sum(u["input_tokens"] for u in token_usage),
+            "output_tokens": sum(u["output_tokens"] for u in token_usage),
+            "cache_read_tokens": sum(u["cache_read_tokens"] for u in token_usage),
+            "cache_creation_tokens": sum(u["cache_creation_tokens"] for u in token_usage),
+        }
+        try:
+            from feedback.stats import compute_cost_eur
+            model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+            est_cost_eur = compute_cost_eur(tok, model) or 0.0
+        except Exception:
+            est_cost_eur = 0.0
         log_run_finish(
             run_id=run_id,
             sites_scraped=len(set(j.source for j in raw_jobs)) if "raw_jobs" in dir() else 0,
@@ -441,6 +460,11 @@ def main(
             status=status,
             source_yields=source_yields,
             conn=conn,
+            input_tokens=tok["input_tokens"],
+            output_tokens=tok["output_tokens"],
+            cache_read_tokens=tok["cache_read_tokens"],
+            cache_creation_tokens=tok["cache_creation_tokens"],
+            est_cost_eur=est_cost_eur,
         )
         conn.close()
 
