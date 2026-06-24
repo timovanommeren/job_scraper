@@ -260,7 +260,7 @@ _DASH_CSS = """<style>
 .bar-row{display:flex;align-items:center;gap:10px;font-size:13px;margin:5px 0}
 .bar-label{width:170px;color:#475569;flex-shrink:0}
 .bar-track{flex:1;background:#f1f5f9;border-radius:4px;height:16px;overflow:hidden}
-.bar-fill{height:100%;background:#2563eb;border-radius:4px}
+.bar-fill{display:block;height:100%;min-width:2px;background:#2563eb;border-radius:4px}
 .bar-val{width:48px;text-align:right;color:#64748b;flex-shrink:0}
 .kv td:first-child{color:#64748b;width:46%}
 .src-check{color:#dc2626;font-weight:bold}
